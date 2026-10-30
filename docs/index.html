@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installa R4850G ESPHome</title>
+<meta name="description" content="Installazione dal browser del firmware ESPHome per alimentatori Huawei R4850G / R48xx">
+<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+<style>
+:root{color-scheme:light;--bg:#f3f5f8;--card:#fff;--ink:#1c244b;--testo:#324a6d;--muted:#4f6283;--line:#c8d5dc;--acc:#2b5fd9;--warn:#fff5e3}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#11161b;--card:#1a2128;--ink:#e6ebef;--testo:#cfd8e0;--muted:#93a0ab;--line:#2b343d;--acc:#6f9bff;--warn:#3a2c12}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--testo);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+main{max-width:720px;margin:0 auto;padding:28px 16px 40px}
+h1{color:var(--ink);font-size:26px;line-height:1.25;margin:0 0 8px}
+h2{color:var(--ink);font-size:18px;margin:26px 0 8px}
+a{color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:16px 0}
+.schede{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:10px 0 16px}
+.schede label{display:block;border:2px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;background:var(--card)}
+.schede input{margin-right:8px;accent-color:var(--acc)}
+.schede label:has(input:checked){border-color:var(--acc)}
+.schede small{display:block;color:var(--muted);margin-top:2px}
+.btn{display:inline-block;background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 22px;font:inherit;font-weight:700;cursor:pointer}
+.avviso{background:var(--warn);border-left:5px solid #e0a030;border-radius:10px;padding:12px 16px;margin:16px 0}
+ol li{margin-bottom:6px}
+code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:.92em}
+esp-web-install-button:not(:defined) [slot]{display:none}
+footer{color:var(--muted);font-size:13px;margin-top:28px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Installa il firmware R4850G ESPHome</h1>
+  <p>Firmware per comandare gli alimentatori Huawei R4850G / R48xx via CAN con una scheda ESP32. Questa pagina lo installa direttamente dal browser,
+    senza ESPHome e senza Home Assistant. <a href="https://quellidelfaidate.it/">Descrizione del progetto, componenti e collegamenti</a>.</p>
+
+  <div class="card">
+    <h2 style="margin-top:0">1. Scegli la scheda</h2>
+    <div class="schede" role="radiogroup">
+      <label><input type="radio" name="scheda" value="c3" checked>ESP32-C3 SuperMini<small>CAN su GPIO 4 (TX) e 3 (RX)</small></label>
+      <label><input type="radio" name="scheda" value="atom">M5Stack ATOM Lite<small>CAN su G22 (TX) e G19 (RX)</small></label>
+      <label><input type="radio" name="scheda" value="esp32">ESP32 DevKit<small>CAN su D19 (TX) e D21 (RX)</small></label>
+    </div>
+    <h2>2. Collega la scheda e installa</h2>
+    <p>Collega la scheda al computer con il cavo USB, poi premi il pulsante e scegli la porta della scheda.</p>
+    <esp-web-install-button id="installa" manifest="firmware/manifest-c3.json">
+      <button slot="activate" class="btn" type="button">Installa sulla scheda</button>
+      <span slot="unsupported">Questo browser non può installare firmware: usa Chrome o Edge su un computer.</span>
+      <span slot="not-allowed">La pagina deve essere aperta in HTTPS.</span>
+    </esp-web-install-button>
+    <p><small>L'installazione cancella quello che c'è sulla scheda. Dura circa un minuto.</small></p>
+  </div>
+
+  <h2>3. Collega la scheda al WiFi</h2>
+  <ol>
+    <li>Alla fine dell'installazione il browser propone di scegliere la rete WiFi: scegli la tua e scrivi la password.</li>
+    <li>Se salti questo passo, dopo un minuto e mezzo la scheda crea la rete <code>r4850g-xxxxxx</code>, password <code>r4850g-setup</code>.
+      Collegati con il telefono e scegli la tua rete nella pagina che si apre.</li>
+    <li>Apri la pagina della scheda all'indirizzo che le assegna il router, oppure <code>http://r4850g-xxxxxx.local</code> (le sei cifre sono la fine del MAC).</li>
+  </ol>
+
+  <div class="avviso">Il progetto lavora con la rete a 230 V e con correnti continue elevate. Leggi le avvertenze di sicurezza nella
+    <a href="https://quellidelfaidate.it/">pagina del progetto</a> e nel manuale prima di collegare l'alimentatore.</div>
+
+  <h2>Altri file</h2>
+  <p>Manuale in PDF e file per ESPHome Device Builder: <a href="https://github.com/tecno-consulenza/r4850g-esphome/releases/latest">ultimo rilascio su GitHub</a>.
+    Problemi o idee: <a href="https://github.com/tecno-consulenza/r4850g-esphome/issues/new/choose">segnalazioni</a>.</p>
+  <footer>Licenza MIT · progetto condiviso gratuitamente, fornito così com'è, senza garanzie.</footer>
+</main>
+<script>
+document.querySelectorAll('input[name=scheda]').forEach(function (r) {
+  r.addEventListener('change', function () {
+    document.getElementById('installa').setAttribute('manifest', 'firmware/manifest-' + r.value + '.json');
+  });
+});
+</script>
+</body>
+</html>

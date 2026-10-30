@@ -1,0 +1,12 @@
+{
+  "name": "R4850G ESPHome - M5Stack ATOM Lite",
+  "version": "12",
+  "home_assistant_domain": "esphome",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [{ "path": "r4850g-atom-v12.factory.bin", "offset": 0 }]
+    }
+  ]
+}

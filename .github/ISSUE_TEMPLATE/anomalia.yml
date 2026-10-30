@@ -1,0 +1,64 @@
+name: Segnala un'anomalia
+description: Qualcosa non funziona come descritto nel manuale
+title: "[Anomalia] "
+labels: ["anomalia"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Grazie per la segnalazione. Il progetto è portato avanti nel tempo libero: non è un servizio di assistenza e non ci sono tempi di risposta garantiti.
+        Prima di scrivere controlla le segnalazioni già aperte e il capitolo "Problemi e soluzioni" del manuale.
+  - type: input
+    id: versione
+    attributes:
+      label: Versione del firmware
+      description: È scritta in fondo alla pagina della scheda ("Pagina versione …")
+      placeholder: "12"
+    validations:
+      required: true
+  - type: dropdown
+    id: scheda
+    attributes:
+      label: Scheda
+      options:
+        - ESP32-C3 SuperMini
+        - M5Stack ATOM Lite
+        - ESP32 DevKit
+        - Altra (scrivila nella descrizione)
+    validations:
+      required: true
+  - type: dropdown
+    id: installazione
+    attributes:
+      label: Come hai installato il firmware
+      options:
+        - Dal browser (firmware già compilato)
+        - ESPHome Device Builder / Home Assistant
+    validations:
+      required: true
+  - type: input
+    id: alimentatore
+    attributes:
+      label: Modello dell'alimentatore
+      description: Scheda Info della pagina, voce "Modello"
+      placeholder: "R4850G2"
+  - type: textarea
+    id: cosa
+    attributes:
+      label: Cosa succede
+      description: Cosa hai fatto, cosa ti aspettavi e cosa è successo invece
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Righe del log (facoltativo)
+      description: Da Device Builder → LOGS. Togli eventuali dati personali.
+      render: text
+  - type: checkboxes
+    id: controlli
+    attributes:
+      label: Controlli
+      options:
+        - label: Ho cercato tra le segnalazioni già aperte
+          required: true

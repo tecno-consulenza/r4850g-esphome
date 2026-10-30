@@ -1,0 +1,3074 @@
+# ============================================================================
+# Alimentatore Huawei R4850G / R48xx comandato via CAN con ESPHome
+# Firmware versione 12 - scheda ESP32 DevKit (ESP32-WROOM-32)
+# https://github.com/tecno-consulenza/r4850g-esphome   (licenza MIT)
+#
+# Versione per ESPHome Device Builder / Home Assistant. Prima di compilare
+# copia secrets.example.yaml in secrets.yaml e metti i tuoi valori.
+#
+# Collegamenti modulo CAN (SN65HVD230 a 3,3 V) -> scheda:
+#   3V3 -> 3V3     GND -> GND     TX (CTX) -> D19     RX (CRX) -> D21
+# Lato alimentatore: CANH -> CANH, CANL -> CANL (morsetti del modulo)
+# Ritorno all'indirizzo IP automatico: tieni premuto BOOT (GPIO0) per 5 s
+# oppure stacca e riattacca l'alimentazione 3 volte di seguito.
+#
+# La pagina web è nel file r4850g-web.js, che va tenuto nella stessa cartella.
+# Il manuale completo è nella pagina dei rilasci su GitHub.
+#
+# Basato su "CAN-BUS control R4875G1 with ESPHome and MQTT" di mjpalmowski
+# (licenza MIT), riscritto e ampliato.
+# ============================================================================
+
+substitutions:
+  # nome del dispositivo in rete e in Home Assistant (solo lettere minuscole,
+  # cifre e trattini). Chi aggiorna dalla v11 può rimettere r4875g-can01 per
+  # non perdere lo storico in Home Assistant.
+  nome_dispositivo: r4850g
+  nome_visibile: R4850G
+  # rete WiFi usata al primo avvio (poi si cambia dalla pagina web)
+  wifi_ssid_iniziale: !secret wifi_ssid
+  wifi_password_iniziale: !secret wifi_password
+  ap_password: !secret ap_password
+
+  # Statistiche anonime (capitolo "Statistiche anonime" del manuale)
+  versione_firmware: "12"
+  tipo_scheda: "esp32"
+  statistiche_url: "https://statistiche-ha.tecnoconsulenza.it/api/ping.php"
+  statistiche_chiave: "1b64051f4fec0f68dd5533a64c55eb8babe49558"
+
+esphome:
+  name: ${nome_dispositivo}
+  friendly_name: ${nome_visibile}
+  # intestazioni di ESP-IDF usate dalle funzioni di rete e dall'ora
+  includes:
+    - <esp_sntp.h>
+    - <esp_netif.h>
+    - <esp_event.h>
+    - <esp_wifi.h>
+    - <esp_http_client.h>
+    - <esp_crt_bundle.h>
+    - <esp_random.h>
+    - <esp_timer.h>
+
+  on_boot:
+    # Prima che parta il WiFi (priorità 260: dopo la rete di base, prima del WiFi)
+    - priority: 260
+      then:
+        - lambda: |-
+            // 1) Accensioni rapide: 3 avvii di seguito, ciascuno spento entro
+            //    10 secondi, riportano l'indirizzo IP al DHCP. Il contatore ha
+            //    una chiave fissa e viene scritto subito in memoria.
+            {
+              auto pref = global_preferences->make_preference<uint32_t>(0x52344E31UL, true);
+              uint32_t n = 0;
+              if (!pref.load(&n) || n > 100) n = 0;
+              n++;
+              pref.save(&n);
+              global_preferences->sync();
+              ESP_LOGI("rete", "Avvio rapido n. %u", (unsigned) n);
+              if (n >= 3) {
+                id(net_statico) = false;
+                n = 0;
+                pref.save(&n);
+                global_preferences->sync();
+                id(rete_ripristinata) = true;
+                ESP_LOGW("rete", "3 accensioni rapide: indirizzo IP riportato al DHCP");
+              }
+            }
+            // 2) Rete WiFi iniziale. ESPHome salva la rete scelta dalla rete di
+            //    emergenza o dalla pagina web con questa chiave (valida quando il
+            //    file non elenca reti). Se è vuota si mette quella di secrets.yaml.
+            {
+              auto pref = global_preferences->make_preference<wifi::SavedWifiSettings>(88491487UL, true);
+              wifi::SavedWifiSettings s{};
+              const bool presente = pref.load(&s) && s.ssid[0] != '\0';
+              const char *ss = R"__(${wifi_ssid_iniziale})__";
+              const char *pw = R"__(${wifi_password_iniziale})__";
+              if (!presente && ss[0] != '\0') {
+                wifi::SavedWifiSettings n{};
+                strncpy(n.ssid, ss, sizeof(n.ssid) - 1);
+                strncpy(n.password, pw, sizeof(n.password) - 1);
+                pref.save(&n);
+                global_preferences->sync();
+                ESP_LOGI("rete", "Salvata la rete WiFi iniziale: %s", ss);
+              }
+            }
+            // 3) IP statico: appena la scheda si aggancia alla rete WiFi ferma il
+            //    DHCP e imposta indirizzo, gateway, maschera e DNS. Questa
+            //    funzione viene registrata prima di quelle di ESP-IDF, quindi
+            //    gira prima: ESP-IDF vede il DHCP fermo e usa l'indirizzo statico.
+            esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_CONNECTED,
+              [](void *, esp_event_base_t, int32_t, void *) {
+                if (!id(net_statico) || id(net_ip) == 0 || id(net_mask) == 0) return;
+                esp_netif_t *nif = wifi::global_wifi_component->get_esp_netif_sta();
+                if (nif == nullptr) return;
+                esp_netif_dhcpc_stop(nif);
+                esp_netif_ip_info_t info{};
+                info.ip.addr = id(net_ip);
+                info.gw.addr = id(net_gw);
+                info.netmask.addr = id(net_mask);
+                esp_netif_set_ip_info(nif, &info);
+                esp_netif_dns_info_t dns{};
+                dns.ip.type = ESP_IPADDR_TYPE_V4;
+                dns.ip.u_addr.ip4.addr = id(net_dns1) != 0 ? id(net_dns1) : id(net_gw);
+                esp_netif_set_dns_info(nif, ESP_NETIF_DNS_MAIN, &dns);
+                if (id(net_dns2) != 0) {
+                  dns.ip.u_addr.ip4.addr = id(net_dns2);
+                  esp_netif_set_dns_info(nif, ESP_NETIF_DNS_BACKUP, &dns);
+                }
+              }, nullptr);
+            ESP_LOGI("rete", "Indirizzo IP: %s", id(net_statico) ? "statico" : "automatico (DHCP)");
+        # dopo 10 secondi di funzionamento l'avvio non conta più come "rapido"
+        - delay: 10s
+        - lambda: |-
+            auto pref = global_preferences->make_preference<uint32_t>(0x52344E31UL, true);
+            uint32_t n = 0;
+            pref.save(&n);
+            global_preferences->sync();
+    - priority: 600
+      then:
+        # Recupero una tantum dei valori salvati con la versione 5.
+        # ESPHome salva i valori sotto una chiave ricavata dal nome: avendo
+        # cambiato i nomi, senza questo passaggio si ripartirebbe dai valori
+        # di fabbrica. Il recupero avviene solo al primo avvio della v6.
+        - lambda: |-
+            if (id(recupero_v5_fatto)) return;
+            struct Voce {
+              const char *nome_v5;
+              esphome::template_::TemplateNumber *numero;
+            };
+            Voce voci[] = {
+              {"Fan Minimum Speed",                id(can_fan_speed_input)},
+              {"10 Set Voltage Limit",             id(can_voltage_input)},
+              {"11 Set Fallback Voltage Limit",    id(fallback_voltage_input)},
+              {"14 Set AC Current Limit",          id(can_current_limit_input)},
+              {"12 Set DC Current Limit",          id(can_amp_input)},
+              {"13 Set Fallback DC Current Limit", id(fallback_amp_input)},
+              {"Set ON Hour",                      id(on_hour)},
+              {"Set ON Minute",                    id(on_minute)},
+              {"Set OFF Hour",                     id(off_hour)},
+              {"Set OFF Minute",                   id(off_minute)},
+              {"Stage reset voltage",              id(stage_reset_voltage)},
+              {"Stage Threshold 1",                id(stage1_threshold)},
+              {"Stage Current 1",                  id(stage1_current)},
+              {"Stage Threshold 2",                id(stage2_threshold)},
+              {"Stage Current 2",                  id(stage2_current)},
+              {"Stage Threshold 3",                id(stage3_threshold)},
+              {"Stage Current 3",                  id(stage3_current)},
+              {"Stage Threshold 4 Balance",        id(stage4_threshold)},
+              {"Stage Current 4 Balance",          id(stage4_current)},
+              {"Stage Time Balance",               id(stage4_duration)},
+            };
+            int recuperati = 0;
+            for (auto &v : voci) {
+              float valore;
+              auto pref = global_preferences->make_preference<float>(
+                  fnv1_hash_object_id(v.nome_v5, strlen(v.nome_v5)));
+              if (pref.load(&valore) && !std::isnan(valore)) {
+                v.numero->make_call().set_value(valore).perform();
+                ESP_LOGI("recupero", "%s -> %.2f", v.nome_v5, valore);
+                recuperati++;
+              }
+            }
+            bool acceso;
+            const char *nome_sw = "Soft Charge Enable";
+            auto pref_sw = global_preferences->make_preference<bool>(
+                fnv1_hash_object_id(nome_sw, strlen(nome_sw)));
+            if (pref_sw.load(&acceso)) {
+              if (acceso) id(soft_charge_enable).turn_on();
+              else id(soft_charge_enable).turn_off();
+              recuperati++;
+            }
+            id(recupero_v5_fatto) = true;
+            ESP_LOGI("recupero", "Valori della versione 5 recuperati: %d", recuperati);
+        - delay: 15s
+        - script.execute: setup_sequence
+        - script.execute: aggiorna_testi_rete
+        - script.execute: applica_server_ntp
+        - script.execute: statistiche_avvio
+
+esp32:
+  variant: esp32
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+logger:
+  logs:
+    # i singoli invii CAN non vengono elencati; gli errori di invio sì.
+    # Per vederli tutti metti DEBUG al posto di INFO.
+    canbus: INFO
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  # 0s = non riavviare la scheda se Home Assistant non si collega.
+  # Il controllo della carica deve continuare anche con HA spento.
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+
+# Nessuna rete scritta qui: la scheda usa quella salvata in memoria (vedi
+# on_boot). Così la rete scelta dalla pagina web o dalla rete di emergenza
+# resta valida anche dopo un aggiornamento del firmware.
+wifi:
+  # 0s = non riavviare la scheda se il WiFi manca a lungo
+  reboot_timeout: 0s
+  # Rete di emergenza: se la rete salvata non si trova per un minuto e mezzo, la
+  # scheda crea questa rete. Collegandosi si apre una pagina (di ESPHome, in
+  # inglese) per scegliere la rete WiFi e scrivere la password.
+  ap:
+    password: "${ap_password}"
+
+captive_portal:
+
+# Pagina web: http://IP-della-scheda, senza password.
+# Chiunque sia collegato alla tua rete WiFi può aprirla e usare i comandi.
+# La pagina è quella del file r4850g-web.js (stessa cartella di questo file):
+# viene salvata dentro la scheda, quindi si apre anche senza internet.
+# js_url vuoto = non carica la pagina standard di ESPHome da internet.
+web_server:
+  port: 80
+  version: 3
+  js_include: "r4850g-web.js"
+  js_url: ""
+  log: false
+  # mostra alla pagina anche le voci interne (impostazioni di rete): in Home
+  # Assistant non compaiono
+  include_internal: true
+  # niente caricamento del firmware dalla pagina: senza password chiunque
+  # sulla rete potrebbe farlo. Gli aggiornamenti si fanno da Device Builder.
+  ota: false
+  sorting_groups:
+    - id: grp_stato
+      name: "Stato"
+      sorting_weight: 10
+    - id: grp_comandi
+      name: "Comandi"
+      sorting_weight: 20
+    - id: grp_soft
+      name: "Carica a fasi"
+      sorting_weight: 30
+    - id: grp_prog
+      name: "Programmazione oraria"
+      sorting_weight: 40
+    - id: grp_riserva
+      name: "Valori di riserva e ventola"
+      sorting_weight: 50
+    - id: grp_info
+      name: "Informazioni e diagnostica"
+      sorting_weight: 60
+
+# Collegamento HTTPS usato dalle statistiche anonime: porta nel firmware il
+# client HTTP di ESP-IDF e l'elenco delle autorità dei certificati, così il
+# server viene verificato (Let's Encrypt e le altre più diffuse).
+http_request:
+  verify_ssl: true
+  timeout: 10s
+
+# Ora per la programmazione giornaliera di accensione e spegnimento.
+# Prima fonte: internet (NTP). Seconda: Home Assistant, se c'è. Le due fonti
+# regolano lo stesso orologio della scheda. Senza nessuna delle due si usa
+# l'orologio manuale della pagina web.
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Rome
+    servers:
+      - 0.it.pool.ntp.org
+      - 1.it.pool.ntp.org
+      - time.google.com
+    on_time_sync:
+      - lambda: |-
+          id(fonte_ora) = 1;
+          id(fonte_ora_text).publish_state("Internet (NTP)");
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      - lambda: |-
+          if (id(fonte_ora) != 1) {
+            id(fonte_ora) = 2;
+            id(fonte_ora_text).publish_state("Home Assistant");
+          }
+
+# ─────────────────────────── variabili interne ───────────────────────────
+# "restore_value: true" = il valore resta memorizzato anche dopo un riavvio
+globals:
+  # ---------------- Statistiche anonime ----------------
+  # Codice casuale dell'installazione (128 bit): nasce al primo avvio e resta
+  # in memoria. Non contiene nulla della scheda o della rete.
+  - id: stat_id_1
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+  - id: stat_id_2
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+  - id: stat_id_3
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+  - id: stat_id_4
+    type: uint32_t
+    restore_value: yes
+    initial_value: '0'
+  # secondi dall'avvio in cui fare il prossimo invio
+  - id: stat_prossimo
+    type: int64_t
+    restore_value: no
+    initial_value: '0'
+  # 0 = fermo, 1 = invio in corso, 2 = invio finito (esito in stat_esito)
+  - id: stat_stato
+    type: int
+    restore_value: no
+    initial_value: '0'
+  # codice HTTP della risposta, -1 se il server non è raggiungibile
+  - id: stat_esito
+    type: int
+    restore_value: no
+    initial_value: '0'
+  # consenso: 0 = non ancora chiesto, 1 = accettato, 2 = rifiutato
+  - id: stat_scelta
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  # ultimo invio chiesto a mano dalla pagina (per non ripeterlo di continuo)
+  - id: stat_manuale
+    type: int64_t
+    restore_value: no
+    initial_value: '-1000'
+
+
+  # ------------------ RETE (memorizzati) ------------------
+  # Indirizzi in formato lwIP (byte nell'ordine della rete). 0 = non impostato
+  - id: net_statico
+    type: bool
+    restore_value: true
+    initial_value: "false"
+  - id: net_ip
+    type: uint32_t
+    restore_value: true
+    initial_value: "0"
+  - id: net_gw
+    type: uint32_t
+    restore_value: true
+    initial_value: "0"
+  - id: net_mask
+    type: uint32_t
+    restore_value: true
+    initial_value: "0"
+  - id: net_dns1
+    type: uint32_t
+    restore_value: true
+    initial_value: "0"
+  - id: net_dns2
+    type: uint32_t
+    restore_value: true
+    initial_value: "0"
+  # Vero se a questo avvio l'IP è stato riportato al DHCP (3 accensioni rapide)
+  - id: rete_ripristinata
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  # Esito della validazione nelle funzioni di rete
+  - id: rete_ok
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  # Fonte dell'ora: 0 nessuna, 1 internet, 2 Home Assistant
+  - id: fonte_ora
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  # Diventa vero dopo il recupero dei valori della versione 5 (vedi on_boot)
+  - id: recupero_v5_fatto
+    type: bool
+    restore_value: true
+    initial_value: "false"
+
+  # Corrente scelta da te in "Corrente di carica". La carica a fasi
+  # non la supera mai e la ripristina quando le fasi finiscono.
+  - id: user_amp
+    type: float
+    restore_value: no
+    initial_value: 'NAN'
+
+  # Orologio manuale: minuto del giorno impostato e millis() in quel momento
+  - id: clock_base_min
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: clock_base_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  # Diagnostica CAN: messaggi ricevuti dall'avvio e valore al controllo precedente
+  - id: can_rx_count
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: can_rx_last
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  # Fattore per convertire la corrente in ampere nel valore da mandare
+  # all'alimentatore (1024 / corrente nominale). Ricalcolato a ogni avvio.
+  - id: amp_scaling_factor
+    type: float
+    restore_value: true
+    initial_value: "19.6923"
+
+  # Tensioni, potenze e temperature arrivano moltiplicate per 1024
+  - id: voltage_scaling_factor
+    type: int
+    initial_value: "1024"
+    restore_value: true
+
+  - id: max_amp_limit
+    type: float
+    initial_value: "75"
+    restore_value: true
+
+  # Rilevamento dell'alimentatore all'avvio
+  - id: max_current_found_board_1
+    type: bool
+    initial_value: "false"
+
+  - id: search_counter_board_1
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: data_found_board_1
+    type: bool
+    initial_value: "false"
+
+  - id: daily_schedule_disabled
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  # Energia DC erogata (Wh), aggiornata a ogni nuova misura di potenza
+  - id: consumed_wh
+    type: double
+    restore_value: no
+    initial_value: "0.0"
+
+  # Energia AC prelevata dalla rete (Wh), per il rendimento medio
+  - id: consumed_ac_wh
+    type: double
+    restore_value: no
+    initial_value: "0.0"
+
+  - id: frame_counter_bp1
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: frame_counter_msg_start1
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: search_attempts
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  # Testo con i dati di targa letto dall'alimentatore
+  - id: board_properties
+    type: std::string
+    initial_value: '""'
+
+  - id: board_properties_complete
+    type: bool
+    initial_value: "false"
+
+  - id: barcode_found
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  # Stato della carica a fasi
+  - id: last_staged_current
+    type: float
+    restore_value: no
+    initial_value: "40.0"
+
+  - id: stage1_active
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stage2_active
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stage3_active
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stage4_active
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: pre_stage_amp
+    type: float
+    restore_value: no
+    initial_value: "0.0"
+
+  - id: prev_any_stage_active
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  # Secondi trascorsi nella fase 4 (bilanciamento)
+  - id: stage4_elapsed_s
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  # Vero dopo lo spegnimento a fine bilanciamento: la fase 4 non riparte
+  # finché la batteria non scende sotto la tensione di ripartenza
+  - id: stage4_forced_off
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  # Variabili di appoggio delle fasi (non usate dalla logica attuale)
+  - id: custom_stage1_threshold
+    type: float
+    restore_value: no
+    initial_value: "0.0"
+
+  - id: custom_stage1_current
+    type: float
+    restore_value: no
+    initial_value: "0.0"
+
+  - id: custom_stage2_threshold
+    type: float
+    restore_value: no
+    initial_value: "0.0"
+
+  - id: custom_stage2_current
+    type: float
+    restore_value: no
+    initial_value: "0.0"
+
+  - id: custom_stage3_threshold
+    type: float
+    restore_value: no
+    initial_value: "0.0"
+
+  - id: custom_stage3_current
+    type: float
+    restore_value: no
+    initial_value: "0.0"
+
+  - id: custom_stage4_threshold
+    type: float
+    restore_value: no
+    initial_value: "0.0"
+
+  - id: custom_stage4_current
+    type: float
+    restore_value: no
+    initial_value: "0.0"
+
+  # Valori salvati con "Salva valori":
+  # 0-7 = soglia e corrente delle fasi 1-4, 8 = tensione di ripartenza
+  - id: custom_stage
+    type: float[9]
+    restore_value: yes
+    initial_value: '{0,0,0,0,0,0,0,0,0}'
+
+  # ------------------ OROLOGIO -------------------
+  - id: current_hour       # ora attuale (0-23)
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: current_minute     # minuto attuale (0-59)
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: on_time_countdown
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: off_time_countdown
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  - id: g_last_on_delta
+    type: int
+    restore_value: no
+    initial_value: '-1'
+  - id: g_last_off_delta
+    type: int
+    restore_value: no
+    initial_value: '-1'
+
+  - id: g_schedule_disabled_prev
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: g_show_schedule_update_log
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+
+# ----------------------------------------------------------
+#        IMPOSTAZIONI DI RETE (solo nella pagina web)
+# ----------------------------------------------------------
+text:
+  - platform: template
+    name: "Rete WiFi"
+    id: txt_ssid
+    internal: true
+    optimistic: true
+    restore_value: false
+    max_length: 32
+    mode: text
+  - platform: template
+    name: "Password WiFi"
+    id: txt_wifi_pw
+    internal: true
+    optimistic: true
+    restore_value: false
+    max_length: 63
+    mode: password
+  - platform: template
+    name: "IP statico"
+    id: txt_ip
+    internal: true
+    optimistic: true
+    restore_value: true
+    max_length: 15
+    mode: text
+  - platform: template
+    name: "Maschera di rete"
+    id: txt_mask
+    internal: true
+    optimistic: true
+    restore_value: true
+    initial_value: "255.255.255.0"
+    max_length: 15
+    mode: text
+  - platform: template
+    name: "Gateway"
+    id: txt_gw
+    internal: true
+    optimistic: true
+    restore_value: true
+    max_length: 15
+    mode: text
+  - platform: template
+    name: "DNS 1"
+    id: txt_dns1
+    internal: true
+    optimistic: true
+    restore_value: true
+    max_length: 15
+    mode: text
+  - platform: template
+    name: "DNS 2"
+    id: txt_dns2
+    internal: true
+    optimistic: true
+    restore_value: true
+    max_length: 15
+    mode: text
+  # vuoto = server predefiniti (it.pool.ntp.org, time.google.com)
+  - platform: template
+    name: "Server NTP"
+    id: txt_ntp
+    internal: true
+    optimistic: true
+    restore_value: true
+    max_length: 64
+    mode: text
+    set_action:
+      - script.execute: applica_server_ntp
+      - lambda: |-
+          id(esito_rete).publish_state(x.empty() ? "Server NTP: predefiniti" : "Server NTP: " + x);
+
+select:
+  - platform: template
+    name: "Modalità IP"
+    id: sel_modo_ip
+    internal: true
+    optimistic: true
+    restore_value: true
+    options:
+      - "Automatico (DHCP)"
+      - "Statico"
+    initial_option: "Automatico (DHCP)"
+
+# Pulsante della scheda tenuto premuto 5 secondi: IP di nuovo automatico
+binary_sensor:
+  - platform: gpio
+    id: pulsante_scheda
+    pin:
+      number: GPIO0          # pulsante BOOT della ESP32 DevKit
+      inverted: true
+      ignore_strapping_warning: true
+      mode:
+        input: true
+        pullup: true
+    internal: true
+    on_press:
+      - delay: 5s
+      - if:
+          condition:
+            binary_sensor.is_on: pulsante_scheda
+          then:
+            - script.execute: ritorno_dhcp
+
+switch:
+  - platform: template
+    name: "Carica a fasi attiva"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 10
+    id: soft_charge_enable
+    icon: "mdi:scale-balance"
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    turn_on_action:
+      - script.execute: soft_charge_reset
+    turn_off_action:
+      - script.execute: soft_charge_reset
+
+  # Statistiche anonime: acceso di partenza, si spegne dalla pagina o da HA
+  - platform: template
+    name: "Statistiche anonime"
+    id: stat_attive
+    icon: "mdi:chart-bar"
+    entity_category: config
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    turn_on_action:
+      - lambda: |-
+          if (id(stat_scelta) != 1) { id(stat_scelta) = 1; global_preferences->sync(); }
+          id(stat_scelta_text).publish_state("fatta");
+          id(stat_prossimo) = esp_timer_get_time() / 1000000 + 60 + (esp_random() % 240);
+          id(stat_esito_text).publish_state("Attive: prossimo invio entro 5 minuti");
+          ESP_LOGI("statistiche", "Statistiche anonime attivate");
+    turn_off_action:
+      - lambda: |-
+          id(stat_esito_text).publish_state("Disattivate: la scheda non invia nulla");
+          ESP_LOGI("statistiche", "Statistiche anonime disattivate");
+
+
+# ----------------------------------------------------------
+#                      SCRIPT
+# ----------------------------------------------------------
+script:
+  # ---------------- STATISTICHE ANONIME ----------------
+  # All'avvio: crea il codice casuale (solo la prima volta) e fissa il primo
+  # invio tra 10 e 30 minuti, così le schede non scrivono tutte insieme.
+  - id: statistiche_avvio
+    then:
+      - lambda: |-
+          if (id(stat_id_1) == 0 && id(stat_id_2) == 0 && id(stat_id_3) == 0 && id(stat_id_4) == 0) {
+            id(stat_id_1) = esp_random();
+            id(stat_id_2) = esp_random();
+            id(stat_id_3) = esp_random();
+            id(stat_id_4) = esp_random() | 1u;
+            global_preferences->sync();
+            ESP_LOGI("statistiche", "Creato il codice anonimo dell'installazione");
+          }
+          char cod[33];
+          snprintf(cod, sizeof(cod), "%08" PRIx32 "%08" PRIx32 "%08" PRIx32 "%08" PRIx32,
+                   id(stat_id_1), id(stat_id_2), id(stat_id_3), id(stat_id_4));
+          id(stat_codice_text).publish_state(cod);
+          id(stat_prossimo) = esp_timer_get_time() / 1000000 + 600 + (esp_random() % 1200);
+          // senza consenso esplicito le statistiche restano spente
+          if (id(stat_scelta) != 1 && id(stat_attive).state) id(stat_attive).turn_off();
+          id(stat_scelta_text).publish_state(id(stat_scelta) == 0 ? "da_chiedere" : "fatta");
+          if (id(stat_scelta) == 0) {
+            id(stat_esito_text).publish_state("In attesa della tua scelta: nessun invio");
+          } else {
+            id(stat_esito_text).publish_state(id(stat_attive).state
+                ? "Attive: primo invio entro mezz'ora dall'avvio"
+                : "Disattivate: la scheda non invia nulla");
+          }
+
+  # Prepara i dati e li manda al server in un'attività separata (FreeRTOS):
+  # il collegamento HTTPS dura qualche secondo e non deve fermare il ciclo
+  # che comanda l'alimentatore. L'esito viene letto dal controllo ogni minuto.
+  - id: statistiche_invia
+    mode: single
+    then:
+      - lambda: |-
+          const int64_t ora = esp_timer_get_time() / 1000000;
+          if (__atomic_load_n(&id(stat_stato), __ATOMIC_ACQUIRE) != 0) return;
+          if (id(stat_codice_text).state.size() != 32) return;
+          if (wifi::global_wifi_component == nullptr || !wifi::global_wifi_component->is_connected()) {
+            id(stat_prossimo) = ora + 900;
+            id(stat_esito_text).publish_state("In attesa del WiFi per l'invio");
+            return;
+          }
+          if (esp_get_free_heap_size() < 50000) {
+            id(stat_prossimo) = ora + 900;
+            ESP_LOGW("statistiche", "Memoria libera bassa (%u byte): invio rimandato di 15 minuti",
+                     (unsigned) esp_get_free_heap_size());
+            return;
+          }
+          // modello dell'alimentatore: solo lettere, cifre, spazio . _ - /
+          std::string mod;
+          for (char ch : id(board_type_sensor_1).state) {
+            if (isalnum((unsigned char) ch) || ch == ' ' || ch == '.' || ch == '_' || ch == '-' || ch == '/') mod += ch;
+            if (mod.size() >= 32) break;
+          }
+          while (!mod.empty() && mod.back() == ' ') mod.pop_back();
+          while (!mod.empty() && mod.front() == ' ') mod.erase(0, 1);
+          char corpo[200];
+          snprintf(corpo, sizeof(corpo),
+                   "{\"id\":\"%s\",\"fw\":\"%s\",\"scheda\":\"%s\",\"esphome\":\"%s\",\"modello\":\"%s\"}",
+                   id(stat_codice_text).state.c_str(), "${versione_firmware}", "${tipo_scheda}", ESPHOME_VERSION, mod.c_str());
+
+          struct Invio {
+            std::string url, chiave, programma, corpo;
+            int *esito;
+            int *stato;
+          };
+          auto *inv = new Invio{"${statistiche_url}", "${statistiche_chiave}", "R4875G-ESPHome/${versione_firmware}",
+                                corpo, &id(stat_esito), &id(stat_stato)};
+          TaskFunction_t lavoro = [](void *arg) {
+            Invio *p = static_cast<Invio *>(arg);
+            esp_http_client_config_t cfg = {};
+            cfg.url = p->url.c_str();
+            cfg.method = HTTP_METHOD_POST;
+            cfg.timeout_ms = 10000;
+            cfg.crt_bundle_attach = esp_crt_bundle_attach;
+            cfg.disable_auto_redirect = true;
+            cfg.user_agent = p->programma.c_str();
+            cfg.keep_alive_enable = false;
+            int esito = -1;
+            esp_http_client_handle_t c = esp_http_client_init(&cfg);
+            if (c != nullptr) {
+              esp_http_client_set_header(c, "Content-Type", "application/json");
+              esp_http_client_set_header(c, "X-R4875G-Key", p->chiave.c_str());
+              esp_http_client_set_post_field(c, p->corpo.c_str(), (int) p->corpo.size());
+              if (esp_http_client_perform(c) == ESP_OK) esito = esp_http_client_get_status_code(c);
+              esp_http_client_cleanup(c);
+            }
+            *p->esito = esito;
+            __atomic_store_n(p->stato, 2, __ATOMIC_RELEASE);
+            delete p;
+            vTaskDelete(nullptr);
+          };
+          __atomic_store_n(&id(stat_stato), 1, __ATOMIC_RELEASE);
+          id(stat_esito_text).publish_state("Invio in corso");
+          ESP_LOGD("statistiche", "Invio: %s", corpo);
+          if (xTaskCreate(lavoro, "statistiche", 10240, inv, tskIDLE_PRIORITY + 1, nullptr) != pdPASS) {
+            delete inv;
+            __atomic_store_n(&id(stat_stato), 0, __ATOMIC_RELEASE);
+            id(stat_prossimo) = ora + 3600;
+            id(stat_esito_text).publish_state("Invio non riuscito: memoria insufficiente. Riprovo tra un'ora");
+            ESP_LOGW("statistiche", "Impossibile avviare l'invio: memoria insufficiente");
+          }
+
+  # Mostra nella pagina la configurazione IP salvata
+  - id: aggiorna_testi_rete
+    then:
+      - lambda: |-
+          auto ip = [](uint32_t a) {
+            char b[16];
+            snprintf(b, sizeof(b), "%u.%u.%u.%u", (unsigned) (a & 0xFF), (unsigned) ((a >> 8) & 0xFF),
+                     (unsigned) ((a >> 16) & 0xFF), (unsigned) (a >> 24));
+            return std::string(b);
+          };
+          if (id(net_statico) && id(net_ip) != 0) {
+            id(config_ip_text).publish_state("Statico " + ip(id(net_ip)) + ", gateway " + ip(id(net_gw)) +
+                                             ", maschera " + ip(id(net_mask)));
+          } else {
+            id(config_ip_text).publish_state("Automatico (DHCP)");
+          }
+          if (id(rete_ripristinata)) {
+            id(esito_rete).publish_state("Indirizzo IP riportato al DHCP dopo 3 accensioni rapide");
+          }
+          if (id(fonte_ora) == 0) {
+            id(fonte_ora_text).publish_state("Nessuna: imposta l'orologio manuale");
+          }
+
+  # Server NTP scelto dalla pagina: sostituisce il primo dei tre predefiniti.
+  # La stringa resta in un buffer statico perché SNTP conserva il puntatore.
+  - id: applica_server_ntp
+    then:
+      - lambda: |-
+          static char server[65];
+          const std::string &s = id(txt_ntp).state;
+          if (s.empty()) {
+            ESP_LOGI("ora", "Server NTP predefiniti");
+            return;
+          }
+          strncpy(server, s.c_str(), sizeof(server) - 1);
+          server[sizeof(server) - 1] = '\0';
+          esp_sntp_stop();
+          esp_sntp_setservername(0, server);
+          esp_sntp_init();
+          ESP_LOGI("ora", "Server NTP: %s", server);
+
+  # Controlla e salva le impostazioni IP, poi riavvia
+  - id: applica_ip
+    mode: single
+    then:
+      - lambda: |-
+          id(rete_ok) = false;
+          // indirizzo a.b.c.d -> formato lwIP (out) e numero "leggibile" (h)
+          auto leggi = [](const std::string &s, uint32_t &out, uint32_t &h) -> bool {
+            unsigned v[4]; int pos = 0;
+            if (s.size() < 7 || s.size() > 15) return false;
+            for (char c : s) if (!(c == '.' || (c >= '0' && c <= '9'))) return false;
+            if (sscanf(s.c_str(), "%u.%u.%u.%u%n", &v[0], &v[1], &v[2], &v[3], &pos) != 4 || pos != (int) s.size()) return false;
+            for (unsigned x : v) if (x > 255) return false;
+            out = v[0] | (v[1] << 8) | (v[2] << 16) | (v[3] << 24);
+            h = (v[0] << 24) | (v[1] << 16) | (v[2] << 8) | v[3];
+            return true;
+          };
+          auto errore = [](const char *m) {
+            id(esito_rete).publish_state(std::string("Errore: ") + m);
+            ESP_LOGW("rete", "Impostazioni IP rifiutate: %s", m);
+          };
+          if (id(sel_modo_ip).current_option() != std::string("Statico")) {
+            id(net_statico) = false;
+            id(rete_ok) = true;
+            id(esito_rete).publish_state("Salvato: indirizzo automatico (DHCP). Riavvio in corso");
+            return;
+          }
+          uint32_t ip, gw, mask, d1 = 0, d2 = 0, hip, hgw, hmask, hx;
+          if (!leggi(id(txt_ip).state, ip, hip)) { errore("indirizzo IP non valido"); return; }
+          if (!leggi(id(txt_mask).state, mask, hmask)) { errore("maschera di rete non valida"); return; }
+          if (hmask == 0 || hmask == 0xFFFFFFFFu || ((~hmask + 1) & ~hmask) != 0) { errore("maschera di rete non valida"); return; }
+          if (!leggi(id(txt_gw).state, gw, hgw)) { errore("gateway non valido"); return; }
+          if ((hip & hmask) != (hgw & hmask)) { errore("gateway fuori dalla rete dell'indirizzo IP"); return; }
+          if ((hip & ~hmask) == 0 || (hip & ~hmask) == ~hmask) { errore("indirizzo IP riservato per questa maschera"); return; }
+          if (hip == hgw) { errore("indirizzo IP uguale al gateway"); return; }
+          if (!id(txt_dns1).state.empty() && !leggi(id(txt_dns1).state, d1, hx)) { errore("DNS 1 non valido"); return; }
+          if (!id(txt_dns2).state.empty() && !leggi(id(txt_dns2).state, d2, hx)) { errore("DNS 2 non valido"); return; }
+          id(net_ip) = ip; id(net_gw) = gw; id(net_mask) = mask; id(net_dns1) = d1; id(net_dns2) = d2;
+          id(net_statico) = true;
+          id(rete_ok) = true;
+          id(esito_rete).publish_state("Salvato: indirizzo statico " + id(txt_ip).state + ". Riavvio in corso");
+      - if:
+          condition:
+            lambda: 'return id(rete_ok);'
+          then:
+            - delay: 2s
+            - button.press: sys_restart
+
+  # Salva la nuova rete WiFi e riavvia. L'IP torna automatico (DHCP), perché
+  # un indirizzo statico di un'altra rete non funzionerebbe.
+  - id: applica_wifi
+    mode: single
+    then:
+      - lambda: |-
+          id(rete_ok) = false;
+          const std::string ss = id(txt_ssid).state;
+          const std::string pw = id(txt_wifi_pw).state;
+          if (ss.empty() || ss.size() > 32) {
+            id(esito_rete).publish_state("Errore: nome della rete mancante o più lungo di 32 caratteri");
+            return;
+          }
+          if (!pw.empty() && (pw.size() < 8 || pw.size() > 63)) {
+            id(esito_rete).publish_state("Errore: la password WiFi deve avere da 8 a 63 caratteri (o nessuna per una rete aperta)");
+            return;
+          }
+          wifi::global_wifi_component->save_wifi_sta(ss, pw);
+          id(net_statico) = false;
+          id(txt_wifi_pw).publish_state("");
+          id(rete_ok) = true;
+          id(esito_rete).publish_state("Salvato: rete " + ss + ". Riavvio in corso");
+          ESP_LOGI("rete", "Nuova rete WiFi salvata: %s", ss.c_str());
+      - if:
+          condition:
+            lambda: 'return id(rete_ok);'
+          then:
+            - delay: 2s
+            - button.press: sys_restart
+
+  # Ritorno al DHCP (pulsante della scheda tenuto premuto)
+  - id: ritorno_dhcp
+    then:
+      - lambda: |-
+          id(net_statico) = false;
+          ESP_LOGW("rete", "Pulsante: indirizzo IP riportato al DHCP");
+      - delay: 1s
+      - button.press: sys_restart
+
+  - id: setup_sequence
+    mode: single
+    then:
+      # Rileva l'alimentatore e la sua corrente nominale
+      - script.execute: detect_data_board_1
+      - delay: 1s
+
+  - id: detect_data_board_1
+    then:
+      - lambda: |-
+          id(max_current_found_board_1) = false; // azzera prima di cercare
+          id(search_counter_board_1) = 0;        // contatore dei tentativi
+      - while:
+          condition:
+            lambda: |-
+              // continua finché non trova l'alimentatore, al massimo 10 volte
+              return !id(max_current_found_board_1) && id(search_counter_board_1) < 10;
+          then:
+            # richiesta della corrente nominale
+            - canbus.send:
+                can_id: 0x108150fe
+                use_extended_id: true
+                data: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+            - delay: 1s
+            # richiesta dei dati di targa
+            - canbus.send:
+                can_id: 0x1081D2FE
+                use_extended_id: true
+                data: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+            - delay: 1s
+            - lambda: |-
+                id(search_counter_board_1) += 1;
+      - delay: 1s
+      - lambda: |-
+          if (id(search_counter_board_1) >= 10) {
+            ESP_LOGW("canbus", "Alimentatore non trovato dopo 10 tentativi: ricerca interrotta");
+          }
+
+  - id: soft_charge_reset
+    mode: restart
+    then:
+      - lambda: |-
+          ESP_LOGI("carica_fasi", "Interruttore cambiato: azzero lo stato delle fasi");
+          id(stage1_active)        = false;
+          id(stage2_active)        = false;
+          id(stage3_active)        = false;
+          id(stage4_active)        = false;
+          id(stage4_forced_off)    = false;
+          id(stage4_elapsed_s)     = 0;
+          id(prev_any_stage_active)= false;
+          // Corrente impostata da te: al primo giro la prende dal valore salvato
+          if (std::isnan(id(user_amp))) {
+            id(user_amp) = id(can_amp_input).state;
+          }
+          // Se una fase aveva ridotto la corrente, torna a quella impostata
+          // (on_value di "Corrente di carica" manda il comando)
+          if (!std::isnan(id(user_amp)) &&
+              (std::isnan(id(can_amp_input).state) ||
+               fabsf(id(can_amp_input).state - id(user_amp)) >= 0.05f)) {
+            ESP_LOGI("carica_fasi", "Ripristino la corrente impostata: %.1f A", id(user_amp));
+            id(can_amp_input).publish_state(id(user_amp));
+          }
+          id(last_staged_current)  = id(user_amp);
+          id(pre_stage_amp)        = id(user_amp);
+
+# ----------------------------------------------------------
+#                      BUS CAN
+# ----------------------------------------------------------
+canbus:
+  - platform: esp32_can
+    tx_pin: GPIO19    # D19, verso TX (CTX) del modulo CAN
+    rx_pin: GPIO21    # D21, verso RX (CRX) del modulo CAN
+    can_id: 0xE5F32E5
+    bit_rate: 125kbps
+    use_extended_id: True
+    rx_queue_len: 32
+    # all'avvio partono 6 comandi insieme: con la coda predefinita (5)
+    # l'ultimo poteva essere scartato
+    tx_queue_len: 16
+    on_frame:
+      # Conta tutti i messaggi ricevuti (sensore "Messaggi CAN")
+      - can_id: 0
+        can_id_mask: 0
+        use_extended_id: true
+        then:
+          - lambda: |-
+              id(can_rx_count) += 1;
+
+      # Risposta alla richiesta dei dati (0x108040FE). L'alimentatore manda
+      # più messaggi 0x1081407F e chiude con 0x1081407E: la maschera li
+      # prende tutti e due.
+      - can_id: 0x1081407E
+        can_id_mask: 0x1FFFFFFE
+        use_extended_id: true
+        then:
+          - lambda: |-
+              if (x.size() < 8) return;
+              if ((x[0] & 0xF0) != 0) return;   // risposta con codice di errore
+              const uint16_t reg = ((uint16_t) (x[0] & 0x0F) << 8) | x[1];
+              // valore a 32 bit con segno: le temperature possono essere negative
+              const int32_t value = (int32_t) (((uint32_t) x[4] << 24) |
+                                               ((uint32_t) x[5] << 16) |
+                                               ((uint32_t) x[6] << 8) |
+                                                (uint32_t) x[7]);
+              const float v = (float) value;
+              switch (reg) {
+                case 0x170: id(ac_power_in_sensor).publish_state(v); break;
+                case 0x171: id(grid_frequency_sensor).publish_state(v); break;
+                case 0x172: id(input_current_sensor).publish_state(v); break;
+                case 0x173: id(dc_power_out_sensor).publish_state(v); break;
+                case 0x175: id(output_voltage_sensor).publish_state(v); break;
+                case 0x176: id(set_max_output_current_sensor).publish_state(v); break;
+                case 0x178: id(input_grid_voltage_sensor).publish_state(v); break;
+                case 0x17F: id(output_temperature_sensor).publish_state(v); break;
+                case 0x180: id(input_temperature_sensor).publish_state(v); break;
+                case 0x181: id(output_current_sensor).publish_state(v); break;
+                case 0x10E: id(operating_hours).publish_state(v); break;
+                default: break;
+              }
+
+      # Messaggio spontaneo dell'alimentatore (ogni 377 ms):
+      # byte 3 = 1 se l'uscita è spenta, byte 6-7 = corrente istantanea
+      - can_id: 0x1001117E
+        use_extended_id: true
+        then:
+          - lambda: |-
+              if (x.size() < 8) return;
+              const uint8_t state_byte = x[3];
+              const uint8_t error_byte = x[4];
+              const uint16_t alt_amp_value = ((uint16_t) x[6] << 8) | x[7];
+
+              // Pubblica solo quando il valore cambia
+              const float last_raw = id(alt_amp_sensor).get_raw_state();
+              if (std::isnan(last_raw) || last_raw != (float) alt_amp_value) {
+                id(alt_amp_sensor).publish_state(alt_amp_value);
+              }
+
+              const char *new_power_state = "Acceso";
+              if (error_byte == 1) {
+                new_power_state = "Errore";
+              } else if (state_byte != 0) {
+                new_power_state = "Spento";
+              }
+              if (id(power_state_sensor1).state != new_power_state) {
+                id(power_state_sensor1).publish_state(new_power_state);
+              }
+
+      # Dati caratteristici dell'alimentatore (registro 0x001): corrente nominale.
+      # Accetta sia 0x1081507F sia 0x1081507E (ultimo messaggio della risposta).
+      - can_id: 0x1081507E
+        can_id_mask: 0x1FFFFFFE
+        use_extended_id: true
+        then:
+          - lambda: |-
+              if (id(max_current_found_board_1)) {
+                return; // già trovata
+              }
+              if (x.size() < 8) {
+                return; // messaggio troppo corto
+              }
+              if (x[0] != 0x00 || x[1] != 0x01) {
+                return; // non è il registro 0x001
+              }
+              // 10 bit utili, valore = corrente nominale x 2
+              const uint16_t raw = (((uint16_t) x[4] << 8) | x[5]) & 0x3FF;
+              const float max_current = raw / 2.0f;
+              ESP_LOGI("canbus", "Corrente nominale dell'alimentatore: %.1f A", max_current);
+              id(max_current_sensor).publish_state(max_current);
+              id(max_current_found_board_1) = true;
+
+              if (max_current > 0) {
+                id(amp_scaling_factor) = 1024.0f / max_current;
+                ESP_LOGI("canbus", "Nuovo fattore di scala corrente: %.5f", id(amp_scaling_factor));
+                id(sf_value).publish_state(id(amp_scaling_factor));
+              } else {
+                ESP_LOGW("canbus", "Corrente nominale zero: fattore di scala non calcolabile");
+              }
+
+      # Stato ventola (registro 0x187): byte 2-3 velocità minima, 4-5
+      # velocità richiesta, 6-7 giri. A ventola ferma i giri restano
+      # all'ultimo valore, quindi in quel caso si pubblica 0.
+      - can_id: 0x1081827E
+        use_extended_id: true
+        then:
+          - lambda: |-
+              if (x.size() < 8) return;
+              if (x[0] != 0x01 || x[1] != 0x87) return;
+              const uint16_t duty_set_raw = ((uint16_t) x[4] << 8) | x[5];
+              const uint16_t rpm = ((uint16_t) x[6] << 8) | x[7];
+              id(rpm_sensor).publish_state(duty_set_raw > 0 ? rpm : 0);
+
+
+      # Dati di targa: inizio e corpo del testo
+      - can_id: 0x1081D27F
+        use_extended_id: true
+        then:
+          - lambda: |-
+              static bool message_started = false;
+
+              if (x.size() == 8) {
+                if ((uint8_t)x[0] == 0x00 && (uint8_t)x[1] == 0x01) {
+                  id(board_properties) = "";  // nuovo testo: cancella il precedente
+                  id(board_properties_complete) = false;
+                  message_started = true;
+                  id(frame_counter_msg_start1) = 0;
+                  ESP_LOGI("dati_targa", "Inizio dei dati di targa");
+                }
+
+                if (message_started) {
+                  // ogni messaggio porta 6 caratteri a partire da x[2]
+                  std::string frame_data((char*)&x[2], 6);
+                  id(board_properties) += frame_data;
+
+                  id(frame_counter_msg_start1)++;
+
+                  ESP_LOGD("dati_targa", "Messaggio n. %d: %s", id(frame_counter_msg_start1), frame_data.c_str());
+                }
+              }
+
+      # Dati di targa: ultimo messaggio, poi lettura dei campi
+      - can_id: 0x1081D27E
+        use_extended_id: true
+        then:
+          - lambda: |-
+              // eventuali caratteri rimasti nell'ultimo messaggio
+              if (x.size() > 2) {
+                std::string frame_data((char*)&x[2], x.size() - 2);
+                ESP_LOGI("dati_targa", "Ultimo messaggio: %s", frame_data.c_str());
+
+                id(board_properties) += frame_data;
+              }
+              ESP_LOGI("dati_targa", "Messaggi ricevuti: %d", id(frame_counter_msg_start1));
+              ESP_LOGI("dati_targa", "Testo completo: %s", id(board_properties).c_str());
+
+              auto extract_value = [](const std::string &data, const std::string &key) -> std::string {
+                size_t start = data.find(key);
+                if (start == std::string::npos) return "";
+                start += key.size();
+                size_t end = data.find_first_of("\r\n", start);
+                if (end == std::string::npos) {
+                  end = data.size();
+                }
+                return data.substr(start, end - start);
+              };
+
+              struct KeySensorPair {
+                const char* key;
+                esphome::template_::TemplateTextSensor* sensor;
+                bool* flag;
+              };
+
+              // le chiavi sono quelle scritte dall'alimentatore (in inglese)
+              KeySensorPair mappings[] = {
+                {"BoardType=", id(board_type_sensor_1), nullptr},
+                {"BarCode=", id(barcode_sensor_1), nullptr},
+                {"Item=", id(item_no_sensor_1), nullptr},
+                {"Description=", id(description_sensor_1), nullptr},
+                {"Manufactured=", id(manufactured_sensor_1), &id(board_properties_complete)}
+              };
+
+              bool all_keys_found = true;
+
+              for (const auto& mapping : mappings) {
+                std::string value = extract_value(id(board_properties), mapping.key);
+                if (!value.empty()) {
+                  ESP_LOGI("dati_targa", "Trovato %s %s", mapping.key, value.c_str());
+                  mapping.sensor->publish_state(value.c_str());
+                  if (mapping.flag) {
+                    *(mapping.flag) = true;
+                  }
+                } else {
+                  ESP_LOGW("dati_targa", "Campo %s mancante o vuoto", mapping.key);
+                  all_keys_found = false;
+                  if (mapping.flag) {
+                    *(mapping.flag) = false;
+                  }
+                }
+              }
+
+              if (all_keys_found) {
+                id(board_properties_complete) = true;
+                ESP_LOGI("dati_targa", "Tutti i campi trovati");
+              } else {
+                id(board_properties_complete) = false;
+                ESP_LOGI("dati_targa", "Mancano alcuni campi");
+              }
+
+# ----------------------------------------------------------
+#                 SENSORI DI TESTO E NUMERICI
+# ----------------------------------------------------------
+text_sensor:
+  # Statistiche anonime: esito dell'ultimo invio e codice dell'installazione
+  # (solo pagina web)
+  - platform: template
+    name: "Esito statistiche"
+    id: stat_esito_text
+    internal: true
+    update_interval: never
+
+  - platform: template
+    name: "Scelta statistiche"
+    id: stat_scelta_text
+    internal: true
+    update_interval: never
+
+  - platform: template
+    name: "Codice statistiche"
+    id: stat_codice_text
+    internal: true
+    update_interval: never
+
+  - platform: wifi_info
+    ip_address:
+      name: "Indirizzo IP"
+      id: ip_attuale
+      icon: "mdi:ip-network"
+    ssid:
+      name: "Rete WiFi collegata"
+      id: ssid_attuale
+      icon: "mdi:wifi"
+    mac_address:
+      name: "Indirizzo MAC"
+      icon: "mdi:network-outline"
+
+  # Riepilogo della configurazione IP salvata
+  - platform: template
+    name: "Configurazione IP"
+    id: config_ip_text
+    icon: "mdi:ip-network-outline"
+    update_interval: never
+
+  # Esito dell'ultima modifica di rete o del server NTP (solo pagina web)
+  - platform: template
+    name: "Esito rete"
+    id: esito_rete
+    internal: true
+    update_interval: never
+
+  # Da dove arriva l'ora
+  - platform: template
+    name: "Fonte ora"
+    id: fonte_ora_text
+    icon: "mdi:clock-check-outline"
+    update_interval: never
+
+  # Acceso / Spento / Errore / Non risponde
+  - platform: template
+    id: power_state_sensor1
+    name: "Stato alimentatore"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 10
+    icon: "mdi:information-outline"
+
+  - platform: template
+    name: "Modello"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 30
+    id: board_type_sensor_1
+    icon: "mdi:information-outline"
+
+  - platform: template
+    name: "N. di serie"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 40
+    id: barcode_sensor_1
+    icon: "mdi:information-outline"
+
+  - platform: template
+    name: "Codice articolo"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 50
+    id: item_no_sensor_1
+    icon: "mdi:information-outline"
+
+  - platform: template
+    name: "Descrizione"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 60
+    id: description_sensor_1
+    icon: "mdi:information-outline"
+
+  - platform: template
+    name: "Data produzione"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 70
+    id: manufactured_sensor_1
+    icon: "mdi:information-outline"
+
+  # ------------------ ORA E CONTO ALLA ROVESCIA ------------------
+  - platform: template
+    name: "Ora attuale"
+    web_server:
+      sorting_group_id: grp_prog
+      sorting_weight: 10
+    id: local_time_display
+    update_interval: 15s
+    icon: "mdi:clock"
+    lambda: |-
+      // testo "HH:MM"
+      char buff[8];
+      snprintf(buff, sizeof(buff), "%02d:%02d", id(current_hour), id(current_minute));
+      return std::string(buff);
+
+  - platform: template
+    name: "Accende fra"
+    web_server:
+      sorting_group_id: grp_prog
+      sorting_weight: 20
+    id: next_on_text
+    update_interval: 15s
+    icon: "mdi:timer-sand"
+    lambda: |-
+      if (id(daily_schedule_disabled)) {
+        return std::string("Programmazione disattivata");
+      } else {
+        char buff[16];
+        snprintf(buff, sizeof(buff), "%d min", id(on_time_countdown));
+        return std::string(buff);
+      }
+
+  # Punto in cui si trova la carica a fasi (aggiornato ogni 5 s)
+  - platform: template
+    name: "Fase attiva"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 15
+    id: fase_attiva_text
+    icon: "mdi:stairs"
+    update_interval: never
+
+  # ------------------ DIAGNOSTICA CAN ------------------
+  # Aggiornato ogni 5 s dal controllo "Diagnostica CAN" in fondo al file
+  - platform: template
+    name: "Stato bus CAN"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 10
+    id: can_bus_state
+    icon: "mdi:lan-connect"
+    entity_category: diagnostic
+    update_interval: never
+
+sensor:
+  - platform: wifi_signal
+    name: "Segnale WiFi"
+    id: segnale_wifi
+    update_interval: 30s
+    entity_category: diagnostic
+
+  # ------------------ DIAGNOSTICA CAN ------------------
+  # Messaggi ricevuti dall'alimentatore dall'ultimo avvio: se sale, il CAN funziona
+  - platform: template
+    name: "Messaggi CAN"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 20
+    id: can_frames_rx_sensor
+    icon: "mdi:counter"
+    accuracy_decimals: 0
+    state_class: total_increasing
+    entity_category: diagnostic
+    update_interval: never
+
+  - platform: template
+    name: "Fattore di scala"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 100
+    id: sf_value
+    accuracy_decimals: 4
+    icon: "mdi:information-outline"
+    update_interval: never
+
+  - platform: template
+    name: "Corrente nominale"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 80
+    id: max_current_sensor
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    icon: "mdi:information-outline"
+
+  - platform: template
+    name: "Fattore di scala (interno)"
+    lambda: |-
+      return id(amp_scaling_factor);
+    update_interval: 10s
+    internal: true
+    icon: "mdi:information-outline"
+
+  # Corrente letta dal messaggio spontaneo: si aggiorna più spesso
+  - platform: template
+    name: "Corrente DC rapida"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 130
+    id: alt_amp_sensor
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    filters:
+      - lambda: |-
+          return x / id(amp_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:current-dc"
+
+  - platform: template
+    name: "Potenza AC"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 50
+    id: ac_power_in_sensor
+    unit_of_measurement: "W"
+    state_class: "measurement"
+    accuracy_decimals: 0
+    filters:
+      - lambda: |-
+          return x / id(voltage_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:flash"
+    on_value:
+      then:
+        - lambda: |-
+            // Contatore dell'energia prelevata dalla rete: stesso metodo
+            // del contatore DC (media dei due valori x tempo trascorso)
+            static uint32_t last_ms = 0;
+            static float last_w = NAN;
+            const uint32_t now_ms = millis();
+            if (!std::isnan(x) && !std::isnan(last_w)) {
+              const uint32_t dt_ms = now_ms - last_ms;
+              if (dt_ms > 0 && dt_ms <= 30000) {
+                id(consumed_ac_wh) += (double) (last_w + x) * 0.5 * (dt_ms / 3600000.0);
+              }
+            }
+            last_w = x;
+            last_ms = now_ms;
+
+  - platform: template
+    name: "Potenza DC"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 40
+    id: dc_power_out_sensor
+    unit_of_measurement: "W"
+    state_class: "measurement"
+    accuracy_decimals: 0
+    filters:
+      - lambda: |-
+          return x / id(voltage_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:flash"
+    on_value:
+      then:
+        - lambda: |-
+            // Contatore energia: integra la potenza DC a ogni nuovo valore
+            // (media dei due valori x tempo trascorso). Pause oltre 30 s
+            // (alimentatore che non risponde) non vengono conteggiate.
+            static uint32_t last_ms = 0;
+            static float last_w = NAN;
+            const uint32_t now_ms = millis();
+            if (!std::isnan(x) && !std::isnan(last_w)) {
+              const uint32_t dt_ms = now_ms - last_ms;
+              if (dt_ms > 0 && dt_ms <= 30000) {
+                id(consumed_wh) += (double) (last_w + x) * 0.5 * (dt_ms / 3600000.0);
+              }
+            }
+            last_w = x;
+            last_ms = now_ms;
+
+  - platform: template
+    name: "Frequenza AC"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 80
+    id: grid_frequency_sensor
+    unit_of_measurement: "Hz"
+    state_class: "measurement"
+    accuracy_decimals: 2
+    filters:
+      - lambda: |-
+          return x / id(voltage_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:transmission-tower-import"
+
+  - platform: template
+    name: "Corrente AC"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 70
+    id: input_current_sensor
+    unit_of_measurement: "A"
+    state_class: "measurement"
+    accuracy_decimals: 2
+    filters:
+      - lambda: |-
+          return x / id(voltage_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:current-ac"
+
+  - platform: template
+    name: "Tensione DC"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 20
+    id: output_voltage_sensor
+    unit_of_measurement: "V"
+    state_class: "measurement"
+    accuracy_decimals: 2
+    filters:
+      - lambda: |-
+          return x / id(voltage_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:current-dc"
+
+  - platform: template
+    name: "Ore di lavoro"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 90
+    id: operating_hours
+    unit_of_measurement: "h"
+    state_class: "measurement"
+    accuracy_decimals: 0
+    filters:
+      - lambda: |-
+          return x;
+    icon: "mdi:information-outline"
+
+  - platform: template
+    name: "Tensione AC"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 60
+    id: input_grid_voltage_sensor
+    unit_of_measurement: "V"
+    state_class: "measurement"
+    accuracy_decimals: 1
+    filters:
+      - lambda: |-
+          return x / id(voltage_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:sine-wave"
+
+  - platform: template
+    name: "Temp. uscita"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 90
+    id: output_temperature_sensor
+    unit_of_measurement: "°C"
+    state_class: "measurement"
+    accuracy_decimals: 1
+    filters:
+      - lambda: |-
+          return x / id(voltage_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:thermometer"
+
+  - platform: template
+    name: "Temp. ingresso"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 100
+    id: input_temperature_sensor
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    filters:
+      - lambda: |-
+          return x / id(voltage_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:thermometer"
+
+  - platform: template
+    name: "Corrente DC"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 30
+    id: output_current_sensor
+    unit_of_measurement: "A"
+    state_class: "measurement"
+    accuracy_decimals: 2
+    filters:
+      - lambda: |-
+          return x / id(voltage_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:current-dc"
+
+  # Limite di corrente che l'alimentatore sta applicando in questo momento
+  - platform: template
+    name: "Limite DC attivo"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 120
+    id: set_max_output_current_sensor
+    unit_of_measurement: "A"
+    state_class: "measurement"
+    accuracy_decimals: 1
+    filters:
+      - lambda: |-
+          return x / id(amp_scaling_factor);
+      - throttle_average: 5s
+    icon: "mdi:current-ac"
+
+  - platform: template
+    name: "Spegne fra"
+    web_server:
+      sorting_group_id: grp_prog
+      sorting_weight: 30
+    id: next_off_sensor
+    unit_of_measurement: "min"
+    accuracy_decimals: 0
+    lambda: |-
+      return id(off_time_countdown);
+    update_interval: 15s
+    icon: "mdi:timer-sand"
+
+  # Energia DC erogata dall'avvio (o dall'ultimo azzeramento). device_class
+  # e state_class permettono di usarla nella dashboard Energia di HA, che
+  # gestisce da sola gli azzeramenti dopo un riavvio.
+  # Rendimento istantaneo: potenza DC / potenza AC (medie di 5 s).
+  # Sotto 30 W prelevati dalla rete il valore non è significativo.
+  - platform: template
+    name: "Rendimento"
+    id: rendimento_sensor
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 1
+    icon: "mdi:percent-circle-outline"
+    update_interval: 5s
+    lambda: |-
+      const float ac = id(ac_power_in_sensor).state;
+      const float dc = id(dc_power_out_sensor).state;
+      if (std::isnan(ac) || std::isnan(dc) || ac < 30.0f || dc < 0.0f) return NAN;
+      const float r = dc / ac * 100.0f;
+      if (r > 100.5f) return NAN;    // misure non allineate: valore scartato
+      return r > 100.0f ? 100.0f : r;
+
+  # Potenza persa in calore dentro l'alimentatore
+  - platform: template
+    name: "Perdite"
+    id: perdite_sensor
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    icon: "mdi:fire"
+    update_interval: 5s
+    lambda: |-
+      const float ac = id(ac_power_in_sensor).state;
+      const float dc = id(dc_power_out_sensor).state;
+      if (std::isnan(ac) || std::isnan(dc) || ac < 30.0f) return NAN;
+      const float p = ac - dc;
+      return p < 0.0f ? 0.0f : p;
+
+  # Energia prelevata dalla rete dall'avvio (o dall'ultimo azzeramento)
+  - platform: template
+    name: "Energia dalla rete"
+    id: consumed_ac_wh_sensor
+    unit_of_measurement: "Wh"
+    device_class: energy
+    state_class: total_increasing
+    icon: "mdi:transmission-tower"
+    accuracy_decimals: 0
+    lambda: |-
+      return id(consumed_ac_wh);
+    update_interval: 30s
+
+  # Rendimento medio: energia erogata / energia prelevata (servono almeno 10 Wh)
+  - platform: template
+    name: "Rendimento medio"
+    id: rendimento_medio_sensor
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 1
+    icon: "mdi:percent-outline"
+    update_interval: 30s
+    lambda: |-
+      if (id(consumed_ac_wh) < 10.0) return NAN;
+      const double r = id(consumed_wh) / id(consumed_ac_wh) * 100.0;
+      return (float) (r > 100.0 ? 100.0 : r);
+
+  - platform: template
+    name: "Energia erogata"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 140
+    id: consumed_wh_sensor
+    unit_of_measurement: "Wh"
+    device_class: energy
+    state_class: total_increasing
+    icon: "mdi:transmission-tower-import"
+    accuracy_decimals: 0
+    lambda: |-
+      return id(consumed_wh);
+    update_interval: 30s
+
+  - platform: template
+    name: "Giri ventola"
+    web_server:
+      sorting_group_id: grp_stato
+      sorting_weight: 110
+    id: rpm_sensor
+    unit_of_measurement: "giri/min"
+    accuracy_decimals: 0
+    icon: "mdi:fan"
+    filters:
+      - throttle_average: 5s
+
+# ----------------------------------------------------------
+#                    VALORI DA IMPOSTARE
+# ----------------------------------------------------------
+number:
+
+  - platform: template
+    name: "Ventola minima"
+    web_server:
+      sorting_group_id: grp_riserva
+      sorting_weight: 30
+    id: can_fan_speed_input
+    min_value: 0
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+    optimistic: true
+    mode: SLIDER
+    restore_value: true
+    icon: "mdi:fan"
+    on_value:
+      then:
+        - delay: 0.01s  # attesa breve perché il valore sia aggiornato
+        - lambda: |-
+            float fan_value = id(can_fan_speed_input).state;
+            ESP_LOGI("comandi", "Velocità minima ventola: %.0f%%", fan_value);
+        - canbus.send:
+            use_extended_id: true
+            can_id: 0x108080FE
+            data: !lambda |-
+              std::vector<uint8_t> can_data(8, 0x00);
+              // registro della velocità ventola
+              can_data[0] = 0x01;
+              can_data[1] = 0x14;
+              // valore = percentuale x 256, su due byte (prima il più alto)
+              int scaled_value = (int)(id(can_fan_speed_input).state * 256);
+              can_data[2] = (scaled_value >> 8) & 0xFF;
+              can_data[3] = scaled_value & 0xFF;
+              // byte 4-7 a zero
+              return can_data;
+
+  - platform: template
+    name: "Tensione di carica"
+    web_server:
+      sorting_group_id: grp_comandi
+      sorting_weight: 30
+    id: can_voltage_input
+    min_value: 49
+    max_value: 58
+    step: 0.1
+    unit_of_measurement: "V"
+    optimistic: true
+    mode: BOX
+    restore_value: true
+    initial_value: 53.5   # solo al primo avvio, poi resta l'ultimo valore impostato
+    icon: "mdi:sine-wave"
+    on_value:
+      then:
+        - delay: 0.01s
+        - lambda: |-
+            float voltage_value = id(can_voltage_input).state;
+            ESP_LOGI("comandi", "Tensione di carica: %.1f V", voltage_value);
+        - canbus.send:
+            use_extended_id: true
+            can_id: 0x108080FE
+            data: !lambda |-
+              std::vector<uint8_t> can_data(8, 0x00);
+              can_data[0] = 0x01;  // registro 0x100: tensione
+              int scaled_value = (int) lroundf(id(can_voltage_input).state * id(voltage_scaling_factor));
+              can_data[6] = (scaled_value >> 8) & 0xFF;
+              can_data[7] = scaled_value & 0xFF;
+              return can_data;
+
+  - platform: template
+    name: "Tensione di riserva"
+    web_server:
+      sorting_group_id: grp_riserva
+      sorting_weight: 10
+    id: fallback_voltage_input
+    min_value: 49
+    max_value: 58
+    step: 0.1
+    unit_of_measurement: "V"
+    optimistic: true
+    mode: BOX
+    restore_value: True
+    initial_value: 53.5   # solo al primo avvio (53.5 V è il valore di fabbrica)
+    icon: "mdi:sine-wave"
+    on_value:
+      then:
+        - delay: 0.01s
+        - lambda: |-
+            float fallback_voltage_value = id(fallback_voltage_input).state;
+            ESP_LOGI("comandi", "Tensione di riserva: %.1f V", fallback_voltage_value);
+        - canbus.send:
+            use_extended_id: true
+            can_id: 0x108080FE
+            data: !lambda |-
+              std::vector<uint8_t> can_data(8, 0x00);
+              can_data[0] = 0x01;
+              can_data[1] = 0x01;  // registro 0x101: tensione di riserva
+              int fallback_scaled_value = (int) lroundf(id(fallback_voltage_input).state * id(voltage_scaling_factor));
+              can_data[6] = (fallback_scaled_value >> 8) & 0xFF;
+              can_data[7] = fallback_scaled_value & 0xFF;
+              return can_data;
+
+  # 0 = nessun limite sulla corrente prelevata dalla rete
+  - platform: template
+    name: "Limite rete AC"
+    web_server:
+      sorting_group_id: grp_comandi
+      sorting_weight: 50
+    id: can_current_limit_input
+    min_value: 0
+    max_value: 21
+    step: 0.1
+    unit_of_measurement: "A"
+    optimistic: true
+    mode: BOX
+    restore_value: True
+    icon: "mdi:current-ac"
+    on_value:
+      then:
+        - delay: 0.01s
+        - lambda: |-
+            float current_value = id(can_current_limit_input).state;
+            float max_current = 10.0; // valore predefinito
+            if (id(amp_scaling_factor) >= 18 && id(amp_scaling_factor) <= 22) {
+              max_current = 17.0;
+            } else if (id(amp_scaling_factor) >= 13 && id(amp_scaling_factor) <= 15) {
+              max_current = 21.0;
+            } else if (id(amp_scaling_factor) >= 25 && id(amp_scaling_factor) <= 35) {
+              max_current = 13.0;
+            }
+            if (current_value > max_current) {
+              ESP_LOGW("comandi", "Limite AC %.1f A oltre il massimo del modello (%.1f A): corretto", current_value, max_current);
+              id(can_current_limit_input).publish_state(max_current);
+              current_value = max_current;
+            }
+            if (current_value == 0) {
+              ESP_LOGI("comandi", "Limite corrente dalla rete disattivato");
+            } else {
+              ESP_LOGI("comandi", "Limite corrente dalla rete: %.1f A", current_value);
+            }
+        - canbus.send:
+            use_extended_id: true
+            can_id: 0x108080FE
+            data: !lambda |-
+              std::vector<uint8_t> can_data(8, 0x00);
+              int scaled_value = (int) lroundf(id(can_current_limit_input).state * id(voltage_scaling_factor));
+              can_data[0] = 0x01;
+              can_data[1] = 0x09;
+              can_data[3] = (id(can_current_limit_input).state > 0) ? 0x01 : 0x00;
+              can_data[6] = (scaled_value >> 8) & 0xFF;
+              can_data[7] = scaled_value & 0xFF;
+              return can_data;
+
+  - platform: template
+    name: "Corrente di carica"
+    web_server:
+      sorting_group_id: grp_comandi
+      sorting_weight: 40
+    id: can_amp_input
+    min_value: 0
+    max_value: 75
+    step: 0.1
+    unit_of_measurement: "A"
+    optimistic: true
+    mode: BOX
+    restore_value: true
+    initial_value: 10     # solo al primo avvio, poi resta l'ultimo valore impostato
+    icon: "mdi:current-dc"
+    # set_action scatta solo quando cambi tu il valore (non quando lo cambia
+    # la carica a fasi): è la corrente massima che la carica a fasi rispetta
+    set_action:
+      - lambda: |-
+          id(user_amp) = x;
+    on_value:
+      then:
+        - delay: 0.01s
+        - lambda: |-
+            float amp_value = id(can_amp_input).state;
+            float max_amps = 75.0;
+            if (id(amp_scaling_factor) >= 18 && id(amp_scaling_factor) <= 22) {
+              max_amps = 50.0;
+            } else if (id(amp_scaling_factor) >= 13 && id(amp_scaling_factor) <= 15) {
+              max_amps = 75;
+            } else if (id(amp_scaling_factor) >= 25 && id(amp_scaling_factor) <= 35) {
+              max_amps = 30.0;
+            }
+            if (amp_value > max_amps) {
+              ESP_LOGW("comandi", "Corrente %.1f A oltre il massimo del modello (%.1f A): corretta", amp_value, max_amps);
+              id(can_amp_input).publish_state(max_amps);
+              amp_value = max_amps;
+            }
+            ESP_LOGI("comandi", "Corrente di carica: %.1f A", amp_value);
+        - canbus.send:
+            use_extended_id: true
+            can_id: 0x108080FE
+            data: !lambda |-
+              std::vector<uint8_t> can_data(8, 0x00);
+              int scaled_value = (int) lroundf(id(can_amp_input).state * id(amp_scaling_factor));
+              can_data[0] = 0x01;
+              can_data[1] = 0x03;
+              can_data[6] = (scaled_value >> 8) & 0xFF;
+              can_data[7] = scaled_value & 0xFF;
+              return can_data;
+
+  - platform: template
+    name: "Corrente di riserva"
+    web_server:
+      sorting_group_id: grp_riserva
+      sorting_weight: 20
+    id: fallback_amp_input
+    min_value: 0
+    max_value: 75
+    step: 0.1
+    unit_of_measurement: "A"
+    optimistic: true
+    mode: BOX
+    restore_value: true
+    initial_value: 10     # solo al primo avvio, poi resta l'ultimo valore impostato
+    icon: "mdi:current-dc"
+    on_value:
+      then:
+        - delay: 0.01s
+        - lambda: |-
+            float fallback_amp_value = id(fallback_amp_input).state;
+            float max_amps = 75.0;
+            if (id(amp_scaling_factor) >= 18 && id(amp_scaling_factor) <= 22) {
+              max_amps = 50.0;
+            } else if (id(amp_scaling_factor) >= 13 && id(amp_scaling_factor) <= 15) {
+              max_amps = 75;
+            } else if (id(amp_scaling_factor) >= 25 && id(amp_scaling_factor) <= 35) {
+              max_amps = 30.0;
+            }
+            if (fallback_amp_value > max_amps) {
+              ESP_LOGW("comandi", "Corrente di riserva %.1f A oltre il massimo (%.1f A): corretta", fallback_amp_value, max_amps);
+              id(fallback_amp_input).publish_state(max_amps);
+              fallback_amp_value = max_amps;
+            }
+            ESP_LOGI("comandi", "Corrente di riserva: %.1f A", fallback_amp_value);
+        - canbus.send:
+            use_extended_id: true
+            can_id: 0x108080FE
+            data: !lambda |-
+              std::vector<uint8_t> can_data(8, 0x00);
+              int scaled_value = (int) lroundf(id(fallback_amp_input).state * id(amp_scaling_factor));
+              can_data[0] = 0x01;
+              can_data[1] = 0x04;
+              can_data[6] = (scaled_value >> 8) & 0xFF;
+              can_data[7] = scaled_value & 0xFF;
+              return can_data;
+
+  # ------------------- OROLOGIO MANUALE -------------------
+  # Serve solo se l'ora di Home Assistant non è disponibile (uso senza
+  # rete). Con Home Assistant collegato viene ignorato. Non viene
+  # memorizzato: dopo un riavvio va reimpostato.
+  - platform: template
+    name: "Ora manuale"
+    web_server:
+      sorting_group_id: grp_prog
+      sorting_weight: 80
+    min_value: 0
+    max_value: 23
+    step: 1
+    mode: BOX
+    optimistic: true
+    restore_value: false
+    icon: "mdi:clock"
+    set_action:
+      - lambda: |-
+          const uint32_t now_ms = millis();
+          const uint32_t elapsed_min = (now_ms - id(clock_base_ms)) / 60000u;
+          const int cur = (int) ((id(clock_base_min) + elapsed_min) % 1440u);
+          id(clock_base_min) = ((int) x) * 60 + (cur % 60);
+          id(clock_base_ms) = now_ms;
+
+  - platform: template
+    name: "Minuti manuali"
+    web_server:
+      sorting_group_id: grp_prog
+      sorting_weight: 90
+    min_value: 0
+    max_value: 59
+    step: 1
+    mode: BOX
+    optimistic: true
+    restore_value: false
+    icon: "mdi:clock"
+    set_action:
+      - lambda: |-
+          const uint32_t now_ms = millis();
+          const uint32_t elapsed_min = (now_ms - id(clock_base_ms)) / 60000u;
+          const int cur = (int) ((id(clock_base_min) + elapsed_min) % 1440u);
+          id(clock_base_min) = (cur / 60) * 60 + (int) x;
+          id(clock_base_ms) = now_ms;
+
+  # ------------------- PROGRAMMAZIONE GIORNALIERA -------------------
+  # Accensione e spegnimento alla stessa ora = programmazione disattivata
+  - platform: template
+    name: "Accendi: ora"
+    web_server:
+      sorting_group_id: grp_prog
+      sorting_weight: 40
+    id: on_hour
+    min_value: 0
+    max_value: 23
+    step: 1
+    mode: BOX
+    optimistic: true
+    restore_value: true
+    icon: "mdi:timer-play"
+    on_value:
+      then:
+        - lambda: |-
+            id(g_show_schedule_update_log) = true;
+
+  - platform: template
+    name: "Accendi: minuti"
+    web_server:
+      sorting_group_id: grp_prog
+      sorting_weight: 50
+    id: on_minute
+    min_value: 0
+    max_value: 59
+    step: 1
+    mode: BOX
+    optimistic: true
+    restore_value: true
+    icon: "mdi:timer-play"
+    on_value:
+      then:
+        - lambda: |-
+            id(g_show_schedule_update_log) = true;
+
+  - platform: template
+    name: "Spegni: ora"
+    web_server:
+      sorting_group_id: grp_prog
+      sorting_weight: 60
+    id: off_hour
+    min_value: 0
+    max_value: 23
+    step: 1
+    mode: BOX
+    optimistic: true
+    restore_value: true
+    icon: "mdi:timer-off"
+    on_value:
+      then:
+        - lambda: |-
+            id(g_show_schedule_update_log) = true;
+
+  - platform: template
+    name: "Spegni: minuti"
+    web_server:
+      sorting_group_id: grp_prog
+      sorting_weight: 70
+    id: off_minute
+    min_value: 0
+    max_value: 59
+    step: 1
+    mode: BOX
+    optimistic: true
+    restore_value: true
+    icon: "mdi:timer-off"
+    on_value:
+      then:
+        - lambda: |-
+            id(g_show_schedule_update_log) = true;
+
+  # ------------------- CARICA A FASI -------------------
+  # Sotto questa tensione le fasi si azzerano e il ciclo ricomincia
+  - platform: template
+    name: "Ripartenza fasi"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 110
+    id: stage_reset_voltage
+    unit_of_measurement: "V"
+    min_value: 48.00
+    max_value: 58.00
+    mode: BOX
+    step: 0.01
+    icon: "mdi:restore"
+    optimistic: true
+    restore_value: true
+    initial_value: 53.2
+
+  # ================= FASE 1
+  - platform: template
+    name: "Fase 1 tensione"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 20
+    id: stage1_threshold
+    min_value: 45
+    max_value: 58
+    step: 0.01
+    unit_of_measurement: "V"
+    mode: BOX
+    restore_value: true
+    icon: "mdi:numeric-1-circle"
+    optimistic: true
+    initial_value: 55.2
+
+  - platform: template
+    name: "Fase 1 corrente"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 30
+    id: stage1_current
+    min_value: 0
+    max_value: 75
+    step: 0.1
+    unit_of_measurement: "A"
+    mode: BOX
+    restore_value: true
+    icon: "mdi:numeric-1-circle-outline"
+    optimistic: true
+    initial_value: 31
+
+  # ================= FASE 2
+  - platform: template
+    name: "Fase 2 tensione"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 40
+    id: stage2_threshold
+    min_value: 45
+    max_value: 58
+    step: 0.01
+    unit_of_measurement: "V"
+    mode: BOX
+    restore_value: true
+    icon: "mdi:numeric-2-circle"
+    optimistic: true
+    initial_value: 55.3
+
+  - platform: template
+    name: "Fase 2 corrente"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 50
+    id: stage2_current
+    min_value: 0
+    max_value: 75
+    step: 0.1
+    unit_of_measurement: "A"
+    mode: BOX
+    restore_value: true
+    icon: "mdi:numeric-2-circle-outline"
+    optimistic: true
+    initial_value: 10
+
+  # ================= FASE 3
+  - platform: template
+    name: "Fase 3 tensione"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 60
+    id: stage3_threshold
+    min_value: 45
+    max_value: 58
+    step: 0.01
+    unit_of_measurement: "V"
+    mode: BOX
+    restore_value: true
+    icon: "mdi:numeric-3-circle"
+    optimistic: true
+    initial_value: 55.4
+
+  - platform: template
+    name: "Fase 3 corrente"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 70
+    id: stage3_current
+    min_value: 0
+    max_value: 75
+    step: 0.1
+    unit_of_measurement: "A"
+    mode: BOX
+    restore_value: true
+    icon: "mdi:numeric-3-circle-outline"
+    optimistic: true
+    initial_value: 6
+
+  # ================= FASE 4 (bilanciamento celle, poi spegnimento)
+  - platform: template
+    name: "Fase 4 tensione"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 80
+    id: stage4_threshold
+    min_value: 45
+    max_value: 58
+    step: 0.01
+    unit_of_measurement: "V"
+    mode: BOX
+    restore_value: true
+    icon: "mdi:numeric-4-circle"
+    optimistic: true
+    initial_value: 55.5
+
+  - platform: template
+    name: "Fase 4 corrente"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 90
+    id: stage4_current
+    min_value: 0
+    max_value: 75
+    step: 0.1
+    unit_of_measurement: "A"
+    mode: BOX
+    restore_value: true
+    icon: "mdi:numeric-4-circle-outline"
+    optimistic: true
+    initial_value: 2.5
+
+  - platform: template
+    name: "Fase 4 durata"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 100
+    id: stage4_duration
+    min_value: 1
+    max_value: 300
+    step: 1
+    unit_of_measurement: "min"
+    mode: BOX
+    restore_value: true
+    icon: "mdi:timer-play"
+    initial_value: 60
+    optimistic: true
+
+# ----------------------------------------------------------
+#                       PULSANTI
+# ----------------------------------------------------------
+button:
+
+  # Statistiche anonime: risposta "No, grazie" alla domanda della pagina
+  - platform: template
+    name: "Statistiche rifiutate"
+    internal: true
+    on_press:
+      - lambda: |-
+          id(stat_scelta) = 2;
+          global_preferences->sync();
+          id(stat_scelta_text).publish_state("fatta");
+          if (id(stat_attive).state) id(stat_attive).turn_off();
+          else id(stat_esito_text).publish_state("Disattivate: la scheda non invia nulla");
+
+  # Statistiche anonime: invio immediato dalla pagina (al massimo una volta al minuto)
+  - platform: template
+    name: "Invia ora le statistiche"
+    internal: true
+    on_press:
+      - lambda: |-
+          const int64_t ora = esp_timer_get_time() / 1000000;
+          if (!id(stat_attive).state) {
+            id(stat_esito_text).publish_state("Disattivate: accendi l'interruttore per inviare");
+          } else if (ora - id(stat_manuale) < 60) {
+            id(stat_esito_text).publish_state("Aspetta un minuto tra un invio e l'altro");
+          } else {
+            id(stat_manuale) = ora;
+            id(statistiche_invia).execute();
+          }
+
+  # pulsante di riavvio (in Home Assistant non compare; nella pagina sì)
+  - platform: restart
+    id: sys_restart
+    name: "Riavvia scheda"
+    internal: true
+
+  - platform: template
+    name: "Collegati alla rete WiFi"
+    internal: true
+    on_press:
+      - script.execute: applica_wifi
+
+  - platform: template
+    name: "Applica impostazioni IP"
+    internal: true
+    on_press:
+      - script.execute: applica_ip
+
+  - platform: template
+    name: "Accendi"
+    web_server:
+      sorting_group_id: grp_comandi
+      sorting_weight: 10
+    icon: "mdi:power"
+    id: can_on_button
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("comandi", "Pulsante Accendi: invio il comando di accensione");
+        - canbus.send:
+            use_extended_id: true
+            can_id: 0x108080FE
+            data: [0x01, 0x32, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+
+  - platform: template
+    name: "Spegni"
+    web_server:
+      sorting_group_id: grp_comandi
+      sorting_weight: 20
+    icon: "mdi:power"
+    id: can_off_button
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("comandi", "Pulsante Spegni: invio il comando di spegnimento");
+        - canbus.send:
+            use_extended_id: true
+            can_id: 0x108080FE
+            data: [0x01, 0x32, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]
+
+  - platform: template
+    name: "Rileva alimentatore"
+    web_server:
+      sorting_group_id: grp_info
+      sorting_weight: 110
+    icon: "mdi:magnify-scan"
+    on_press:
+      then:
+        - script.execute: setup_sequence
+
+  # Azzera il contatore dell'energia
+  - platform: template
+    name: "Azzera energia"
+    web_server:
+      sorting_group_id: grp_comandi
+      sorting_weight: 60
+    icon: "mdi:restart"
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("energia", "Contatori energia azzerati");
+            id(consumed_wh) = 0.0;
+            id(consumed_ac_wh) = 0.0;
+            id(consumed_wh_sensor).publish_state(0);
+            id(consumed_ac_wh_sensor).publish_state(0);
+            id(rendimento_medio_sensor).publish_state(NAN);
+
+  # Ventola sempre al massimo
+  - platform: template
+    name: "Ventola al massimo"
+    web_server:
+      sorting_group_id: grp_riserva
+      sorting_weight: 40
+    icon: "mdi:fan"
+    on_press:
+      then:
+        - canbus.send:
+            use_extended_id: true
+            can_id: 0x108080FE
+            data: [0x01, 0x34, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]
+
+  # Ventola gestita dall'alimentatore
+  - platform: template
+    name: "Ventola automatica"
+    web_server:
+      sorting_group_id: grp_riserva
+      sorting_weight: 50
+    icon: "mdi:fan-auto"
+    on_press:
+      then:
+        - canbus.send:
+            use_extended_id: true
+            can_id: 0x108080FE
+            data: [0x01, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+
+  - platform: template
+    name: "Valori 16 celle"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 120
+    id: restart_staged_charge_button
+    icon: "mdi:upload"
+    on_press:
+      then:
+        - lambda: |-
+            // === valori per 16 celle LiFePO4 ===
+            // make_call().perform() salva i valori anche dopo un riavvio
+            id(stage1_threshold).make_call().set_value(55.2f).perform();
+            id(stage1_current).make_call().set_value(30.0f).perform();
+            id(stage2_threshold).make_call().set_value(55.3f).perform();
+            id(stage2_current).make_call().set_value(10.0f).perform();
+            id(stage3_threshold).make_call().set_value(55.4f).perform();
+            id(stage3_current).make_call().set_value(6.0f).perform();
+            id(stage4_threshold).make_call().set_value(55.5f).perform();
+            id(stage4_current).make_call().set_value(2.5f).perform();
+            id(stage_reset_voltage).make_call().set_value(53.5f).perform();
+
+            // === fasi azzerate: vengono rivalutate al prossimo controllo ===
+            id(stage1_active) = false;
+            id(stage2_active) = false;
+            id(stage3_active) = false;
+            id(stage4_active) = false;
+            id(stage4_forced_off) = false;
+            id(stage4_elapsed_s) = 0;
+
+            ESP_LOGI("carica_fasi", "Caricati i valori consigliati per 16 celle LiFePO4");
+
+  - platform: template
+    name: "Valori 15 celle"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 130
+    id: restart_staged_charge_button2
+    icon: "mdi:upload"
+    on_press:
+      then:
+        - lambda: |-
+            // === valori per 15 celle LiFePO4 ===
+            id(stage1_threshold).make_call().set_value(51.75f).perform();
+            id(stage1_current).make_call().set_value(30.0f).perform();
+            id(stage2_threshold).make_call().set_value(51.85f).perform();
+            id(stage2_current).make_call().set_value(20.0f).perform();
+            id(stage3_threshold).make_call().set_value(51.94f).perform();
+            id(stage3_current).make_call().set_value(12.0f).perform();
+            id(stage4_threshold).make_call().set_value(52.03f).perform();
+            id(stage4_current).make_call().set_value(5.0f).perform();
+            id(stage_reset_voltage).make_call().set_value(50.16f).perform();
+
+            // === fasi azzerate: vengono rivalutate al prossimo controllo ===
+            id(stage1_active) = false;
+            id(stage2_active) = false;
+            id(stage3_active) = false;
+            id(stage4_active) = false;
+            id(stage4_forced_off) = false;
+            id(stage4_elapsed_s) = 0;
+
+            ESP_LOGI("carica_fasi", "Caricati i valori consigliati per 15 celle LiFePO4");
+
+  - platform: template
+    name: "Salva valori"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 140
+    icon: "mdi:content-save-outline"
+    on_press:
+      then:
+        - lambda: |-
+            float src_thr[4] = {
+              id(stage1_threshold).state,
+              id(stage2_threshold).state,
+              id(stage3_threshold).state,
+              id(stage4_threshold).state };
+
+            float src_cur[4] = {
+              id(stage1_current).state,
+              id(stage2_current).state,
+              id(stage3_current).state,
+              id(stage4_current).state };
+
+            for (int i = 0; i < 4; i++) {
+              id(custom_stage)[2*i]     = src_thr[i];
+              id(custom_stage)[2*i + 1] = src_cur[i];
+            }
+
+            // tensione di ripartenza
+            id(custom_stage)[8] = id(stage_reset_voltage).state;
+
+            ESP_LOGI("carica_fasi", "Valori delle fasi salvati");
+
+  - platform: template
+    name: "Richiama valori"
+    web_server:
+      sorting_group_id: grp_soft
+      sorting_weight: 150
+    icon: "mdi:upload"
+    on_press:
+      then:
+        - lambda: |-
+            auto &a = id(custom_stage);
+
+            // Se "Salva" non è mai stato premuto i valori sono zero: non
+            // vengono caricati (soglie a 0 V attiverebbero subito tutte le fasi)
+            bool valid = true;
+            for (int i = 0; i < 4; i++) {
+              if (std::isnan(a[2*i]) || a[2*i] < 45.0f || a[2*i] > 58.0f) valid = false;
+              if (std::isnan(a[2*i + 1]) || a[2*i + 1] < 0.0f || a[2*i + 1] > 75.0f) valid = false;
+            }
+            if (std::isnan(a[8]) || a[8] < 48.0f || a[8] > 58.0f) valid = false;
+            if (!valid) {
+              ESP_LOGW("carica_fasi", "Nessun valore salvato valido: premi prima Salva valori");
+              return;
+            }
+
+            id(stage1_threshold).make_call().set_value(a[0]).perform();
+            id(stage1_current).make_call().set_value(a[1]).perform();
+            id(stage2_threshold).make_call().set_value(a[2]).perform();
+            id(stage2_current).make_call().set_value(a[3]).perform();
+            id(stage3_threshold).make_call().set_value(a[4]).perform();
+            id(stage3_current).make_call().set_value(a[5]).perform();
+            id(stage4_threshold).make_call().set_value(a[6]).perform();
+            id(stage4_current).make_call().set_value(a[7]).perform();
+            id(stage_reset_voltage).make_call().set_value(a[8]).perform();
+
+            // fasi azzerate: vengono rivalutate al prossimo controllo
+            id(stage1_active) = false;
+            id(stage2_active) = false;
+            id(stage3_active) = false;
+            id(stage4_active) = false;
+            id(stage4_forced_off) = false;
+            id(stage4_elapsed_s) = 0;
+
+            ESP_LOGI("carica_fasi", "Valori delle fasi richiamati");
+
+
+# ----------------------------------------------------------
+#                   CONTROLLI PERIODICI
+# ----------------------------------------------------------
+interval:
+  # ------------- STATISTICHE ANONIME (ogni minuto) -------------
+  # Legge l'esito dell'invio appena finito e decide il prossimo: dopo un invio
+  # riuscito fra 24 ore, dopo un errore fra un'ora (o più se il server lo chiede).
+  - interval: 60s
+    then:
+      - lambda: |-
+          const int64_t ora = esp_timer_get_time() / 1000000;
+          if (__atomic_load_n(&id(stat_stato), __ATOMIC_ACQUIRE) == 2) {
+            const int e = id(stat_esito);
+            __atomic_store_n(&id(stat_stato), 0, __ATOMIC_RELEASE);
+            char t[110];
+            if (e >= 200 && e < 300) {
+              id(stat_prossimo) = ora + 86400 + (esp_random() % 900);
+              auto adesso = id(sntp_time).now();
+              if (adesso.is_valid()) {
+                snprintf(t, sizeof(t), "Ultimo invio riuscito il %02d/%02d alle %02d:%02d",
+                         adesso.day_of_month, adesso.month, adesso.hour, adesso.minute);
+              } else {
+                snprintf(t, sizeof(t), "Ultimo invio riuscito");
+              }
+              ESP_LOGI("statistiche", "Statistiche inviate");
+            } else {
+              int ore = 1;
+              if (e == 429 || e == 503) ore = 6;                 // server occupato: riprova più tardi
+              if (e == 400 || e == 403 || e == 413 || e == 415) ore = 24;  // dati o chiave rifiutati
+              id(stat_prossimo) = ora + (int64_t) ore * 3600;
+              const char *quando = ore == 1 ? "tra un'ora" : (ore == 6 ? "tra 6 ore" : "domani");
+              if (e < 0) snprintf(t, sizeof(t), "Invio non riuscito: server non raggiungibile. Riprovo %s", quando);
+              else snprintf(t, sizeof(t), "Invio non riuscito (risposta %d del server). Riprovo %s", e, quando);
+              ESP_LOGW("statistiche", "%s", t);
+            }
+            id(stat_esito_text).publish_state(t);
+            return;
+          }
+          if (!id(stat_attive).state || id(stat_stato) != 0) return;
+          if (ora < id(stat_prossimo)) return;
+          id(statistiche_invia).execute();
+
+  # ------------- DIAGNOSTICA E RIPRISTINO CAN (ogni 5 s) -------------
+  # Legge lo stato del controller CAN dell'ESP32 e lo mostra in
+  # "Stato bus CAN". Se il controller è andato in bus-off (troppi errori
+  # di trasmissione) avvia il ripristino e poi lo fa ripartire, senza
+  # riavviare la scheda. Se dall'alimentatore non arriva nulla per 10 s i
+  # valori diventano "sconosciuto" invece di restare fermi all'ultima lettura.
+  - interval: 5s
+    then:
+      - lambda: |-
+          static std::string last_state;
+          static uint8_t silent_ticks = 0;
+          static bool values_cleared = false;
+          const uint32_t rx_total = id(can_rx_count);
+          const uint32_t rx_new = rx_total - id(can_rx_last);
+          id(can_rx_last) = rx_total;
+          id(can_frames_rx_sensor).publish_state(rx_total);
+
+          if (rx_new == 0) {
+            if (silent_ticks < 255) silent_ticks++;
+          } else {
+            silent_ticks = 0;
+            values_cleared = false;
+          }
+          if (silent_ticks >= 2 && !values_cleared) {
+            ESP_LOGW("diagnostica_can", "Nessun messaggio dall'alimentatore da 10 s: valori impostati a sconosciuto");
+            id(ac_power_in_sensor).publish_state(NAN);
+            id(grid_frequency_sensor).publish_state(NAN);
+            id(input_current_sensor).publish_state(NAN);
+            id(dc_power_out_sensor).publish_state(NAN);
+            id(output_voltage_sensor).publish_state(NAN);
+            id(set_max_output_current_sensor).publish_state(NAN);
+            id(input_grid_voltage_sensor).publish_state(NAN);
+            id(output_temperature_sensor).publish_state(NAN);
+            id(input_temperature_sensor).publish_state(NAN);
+            id(output_current_sensor).publish_state(NAN);
+            id(alt_amp_sensor).publish_state(NAN);
+            id(rpm_sensor).publish_state(NAN);
+            id(power_state_sensor1).publish_state("Non risponde");
+            values_cleared = true;
+          }
+
+          std::string state_txt;
+          unsigned tec = 0, rec = 0;
+          twai_status_info_t st;
+          if (twai_get_status_info(&st) != ESP_OK) {
+            state_txt = "Driver CAN non avviato";
+          } else {
+            tec = (unsigned) st.tx_error_counter;
+            rec = (unsigned) st.rx_error_counter;
+            if (st.state == TWAI_STATE_BUS_OFF) {
+              state_txt = "Bus-off, ripristino in corso";
+              ESP_LOGW("diagnostica_can", "Bus-off: avvio il ripristino del controller CAN");
+              twai_initiate_recovery();
+            } else if (st.state == TWAI_STATE_RECOVERING) {
+              state_txt = "Bus-off, ripristino in corso";
+            } else if (st.state == TWAI_STATE_STOPPED) {
+              state_txt = "CAN fermo, riavvio";
+              ESP_LOGW("diagnostica_can", "Controller CAN fermo: lo riavvio");
+              twai_start();
+            } else if (tec >= 128) {
+              state_txt = "Nessuna risposta dall'alimentatore";
+            } else if (rec >= 128) {
+              state_txt = "Errori in ricezione";
+            } else if (rx_new == 0) {
+              state_txt = "Nessun dato dall'alimentatore";
+            } else {
+              state_txt = "OK";
+            }
+          }
+
+          if (state_txt != last_state) {
+            if (state_txt == "OK") {
+              ESP_LOGI("diagnostica_can", "CAN: %s (errori TX %u, errori RX %u, messaggi ricevuti %u)",
+                       state_txt.c_str(), tec, rec, (unsigned) rx_total);
+            } else {
+              ESP_LOGW("diagnostica_can", "CAN: %s (errori TX %u, errori RX %u, messaggi ricevuti %u)",
+                       state_txt.c_str(), tec, rec, (unsigned) rx_total);
+            }
+            id(can_bus_state).publish_state(state_txt);
+            last_state = state_txt;
+          }
+
+  # richiesta dei dati elettrici, circa una volta al secondo
+  - interval: 867ms
+    then:
+      - canbus.send:
+          use_extended_id: true
+          can_id: 0x108040FE
+          data: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+
+  # richiesta dello stato della ventola, stesso ritmo ma sfasata di 433 ms
+  - interval: 867ms
+    startup_delay: 433ms     # ritardo iniziale che crea lo sfasamento
+    then:
+      - canbus.send:
+          use_extended_id: true
+          can_id: 0x108182FE
+          data: [0x01, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+
+  # ------------- RINVIO PERIODICO DELLE IMPOSTAZIONI (ogni 30 s) -------------
+  # Se l'alimentatore non riceve tensione e corrente per un po' passa ai
+  # valori di riserva: per questo vengono rimandate.
+  - interval: 30s
+    then:
+      - canbus.send:
+          use_extended_id: true
+          can_id: 0x108180FE
+          data: !lambda |-
+            std::vector<uint8_t> can_data(8, 0x00);
+            can_data[0] = 0x01;
+            int scaled_value = (int) lroundf(id(can_voltage_input).state * id(voltage_scaling_factor));
+            can_data[6] = (scaled_value >> 8) & 0xFF;
+            can_data[7] = scaled_value & 0xFF;
+            return can_data;
+
+  - interval: 30s
+    then:
+      - canbus.send:
+          use_extended_id: true
+          can_id: 0x108180FE
+          data: !lambda |-
+            std::vector<uint8_t> can_data(8, 0x00);
+            can_data[0] = 0x01;
+            can_data[1] = 0x03;
+            int scaled_value = (int) lroundf(id(can_amp_input).state * id(amp_scaling_factor));
+            can_data[6] = (scaled_value >> 8) & 0xFF;
+            can_data[7] = scaled_value & 0xFF;
+            return can_data;
+
+  # Limite di corrente dalla rete AC, rimandato anch'esso: dopo un riavvio
+  # dell'alimentatore altrimenti non ci sarebbe più
+  - interval: 30s
+    then:
+      - canbus.send:
+          use_extended_id: true
+          can_id: 0x108180FE
+          data: !lambda |-
+            std::vector<uint8_t> can_data(8, 0x00);
+            const float ac_limit = id(can_current_limit_input).state;
+            const bool enabled = !std::isnan(ac_limit) && ac_limit > 0;
+            int scaled_value = enabled ? (int) lroundf(ac_limit * id(voltage_scaling_factor)) : 0;
+            can_data[0] = 0x01;
+            can_data[1] = 0x09;
+            can_data[3] = enabled ? 0x01 : 0x00;
+            can_data[6] = (scaled_value >> 8) & 0xFF;
+            can_data[7] = scaled_value & 0xFF;
+            return can_data;
+
+  # ------------- OROLOGIO E PROGRAMMAZIONE GIORNALIERA (ogni 10 s) -------------
+  # Ora: da Home Assistant quando disponibile, altrimenti orologio manuale.
+  # Gli eventi di accensione e spegnimento vengono cercati in tutti i minuti
+  # trascorsi dall'ultimo controllo, così nessun minuto viene saltato.
+  # Se l'ora salta di più di 5 minuti (prima sincronizzazione, ora legale)
+  # si riparte da lì senza recuperare eventi.
+  - interval: 10s
+    then:
+      - lambda: |-
+          static int last_mod = -1;
+          static bool last_from_ha = false;
+
+          // 1) ora attuale (minuto del giorno, 0-1439)
+          //    from_ha = ora valida da una fonte esterna (NTP o Home Assistant)
+          const uint32_t now_ms = millis();
+          int now_mod;
+          bool from_ha = false;
+          auto t = id(sntp_time).now();   // stesso orologio per NTP e Home Assistant
+          if (t.is_valid()) {
+            now_mod = t.hour * 60 + t.minute;
+            from_ha = true;
+            // riallinea l'orologio manuale all'ora esterna
+            id(clock_base_min) = now_mod;
+            id(clock_base_ms) = now_ms - (uint32_t) t.second * 1000u;
+          } else {
+            const uint32_t elapsed_min = (now_ms - id(clock_base_ms)) / 60000u;
+            now_mod = (int) ((id(clock_base_min) + elapsed_min) % 1440u);
+            if (elapsed_min >= 1440u) {
+              // riallineamento giornaliero: millis() ricomincia da zero dopo 49 giorni
+              id(clock_base_min) = now_mod;
+              id(clock_base_ms) += elapsed_min * 60000u;
+            }
+          }
+          id(current_hour) = now_mod / 60;
+          id(current_minute) = now_mod % 60;
+
+          // 2) programmazione: disattivata se accensione e spegnimento coincidono
+          const int on_mod = (int) id(on_hour).state * 60 + (int) id(on_minute).state;
+          const int off_mod = (int) id(off_hour).state * 60 + (int) id(off_minute).state;
+          const bool disabled = (on_mod == off_mod);
+          id(daily_schedule_disabled) = disabled;
+          if (disabled != id(g_schedule_disabled_prev)) {
+            if (disabled) {
+              ESP_LOGI("orologio", "Accensione e spegnimento alla stessa ora: programmazione disattivata");
+            } else {
+              ESP_LOGI("orologio", "Orari impostati: programmazione attiva");
+            }
+            id(g_schedule_disabled_prev) = disabled;
+          }
+          if (disabled) {
+            id(on_time_countdown) = 0;
+            id(off_time_countdown) = 0;
+          } else {
+            id(on_time_countdown) = (on_mod - now_mod + 1440) % 1440;
+            id(off_time_countdown) = (off_mod - now_mod + 1440) % 1440;
+            if (id(g_show_schedule_update_log)) {
+              ESP_LOGI("orologio", "Ora %02d:%02d (%s): prossima accensione fra %d min, prossimo spegnimento fra %d min",
+                       now_mod / 60, now_mod % 60,
+                       from_ha ? (id(fonte_ora) == 1 ? "internet" : "Home Assistant") : "manuale",
+                       id(on_time_countdown), id(off_time_countdown));
+              id(g_show_schedule_update_log) = false;
+            }
+          }
+
+          // 3) eventi nei minuti trascorsi dall'ultimo controllo
+          if (last_mod < 0 || from_ha != last_from_ha) {
+            last_mod = now_mod;
+            last_from_ha = from_ha;
+            return;
+          }
+          const int steps = (now_mod - last_mod + 1440) % 1440;
+          if (steps == 0) return;
+          if (steps > 5) {
+            ESP_LOGI("orologio", "Ora spostata di %d minuti: nessun evento recuperato", steps);
+            last_mod = now_mod;
+            return;
+          }
+          for (int i = 1; i <= steps; i++) {
+            const int m = (last_mod + i) % 1440;
+            if (disabled) break;
+            if (m == on_mod) {
+              ESP_LOGI("orologio", "Programmazione: accendo l'alimentatore");
+              id(can_on_button).press();
+            }
+            if (m == off_mod) {
+              ESP_LOGI("orologio", "Programmazione: spengo l'alimentatore");
+              id(can_off_button).press();
+            }
+          }
+          last_mod = now_mod;
+
+  # ------------- TESTO "FASE ATTIVA" (ogni 5 s) -------------
+  # Legge soltanto lo stato della carica a fasi, non lo modifica
+  - interval: 5s
+    then:
+      - lambda: |-
+          char buf[64];
+          if (!id(soft_charge_enable).state) {
+            snprintf(buf, sizeof(buf), "Carica a fasi spenta");
+          } else if (id(stage4_forced_off)) {
+            snprintf(buf, sizeof(buf), "Completata: alimentatore spento");
+          } else if (id(stage4_active)) {
+            snprintf(buf, sizeof(buf), "Fase 4 bilanciamento: %d di %d min",
+                     id(stage4_elapsed_s) / 60, (int) id(stage4_duration).state);
+          } else if (id(stage3_active)) {
+            snprintf(buf, sizeof(buf), "Fase 3");
+          } else if (id(stage2_active)) {
+            snprintf(buf, sizeof(buf), "Fase 2");
+          } else if (id(stage1_active)) {
+            snprintf(buf, sizeof(buf), "Fase 1");
+          } else {
+            snprintf(buf, sizeof(buf), "Corrente piena");
+          }
+          if (id(fase_attiva_text).state != buf) {
+            id(fase_attiva_text).publish_state(buf);
+          }
+
+  ########################################################################
+  # Carica a fasi: logica principale, ogni 5 secondi
+  ########################################################################
+  - interval: 5s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(soft_charge_enable).state;'
+          then:
+            ##################################################################
+            # 1) Attivazione delle fasi, nuovo ciclo, tempo della fase 4
+            ##################################################################
+            - lambda: |-
+                const float vbat = id(output_voltage_sensor).state;
+                if (std::isnan(vbat)) return;   // nessuna misura: non cambia nulla
+
+                // Nuovo ciclo: la batteria è scesa sotto la tensione di ripartenza.
+                // Si azzera anche il blocco della fase 4.
+                if (vbat < id(stage_reset_voltage).state) {
+                  if (id(stage1_active) || id(stage2_active) || id(stage3_active) ||
+                      id(stage4_active) || id(stage4_forced_off)) {
+                    ESP_LOGI("carica_fasi", "Batteria a %.2f V, sotto la tensione di ripartenza: fasi azzerate", vbat);
+                  }
+                  id(stage1_active) = false;
+                  id(stage2_active) = false;
+                  id(stage3_active) = false;
+                  id(stage4_active) = false;
+                  id(stage4_elapsed_s) = 0;
+                  id(stage4_forced_off) = false;
+                }
+
+                if (!id(stage1_active) && vbat >= id(stage1_threshold).state)
+                  id(stage1_active) = true;
+                if (!id(stage2_active) && vbat >= id(stage2_threshold).state)
+                  id(stage2_active) = true;
+                if (!id(stage3_active) && vbat >= id(stage3_threshold).state)
+                  id(stage3_active) = true;
+                if (!id(stage4_forced_off) && !id(stage4_active) &&
+                    vbat >= id(stage4_threshold).state)
+                  id(stage4_active) = true;
+
+                const bool any_stage_active =
+                    (id(stage1_active) || id(stage2_active) ||
+                     id(stage3_active) || id(stage4_active) || id(stage4_forced_off));
+                if (any_stage_active != id(prev_any_stage_active)) {
+                  if (any_stage_active) {
+                    ESP_LOGI("carica_fasi", "Inizio della carica a fasi (corrente impostata %.1f A)", id(user_amp));
+                  } else {
+                    ESP_LOGI("carica_fasi", "Fine della carica a fasi: torno a %.1f A", id(user_amp));
+                  }
+                  id(prev_any_stage_active) = any_stage_active;
+                }
+
+                if (id(stage4_active) && !id(stage4_forced_off))
+                  id(stage4_elapsed_s) += 5;
+                else
+                  id(stage4_elapsed_s) = 0;
+
+            ##################################################################
+            # 2) Fine del bilanciamento: spegnimento dell'alimentatore
+            ##################################################################
+            - if:
+                condition:
+                  lambda: |-
+                    const int limit_s = (int) (id(stage4_duration).state * 60);  // minuti -> secondi
+                    return (id(stage4_active) && !id(stage4_forced_off) &&
+                            (id(stage4_elapsed_s) >= limit_s));
+                then:
+                  - lambda: |-
+                      ESP_LOGI("carica_fasi",
+                               "Fase 4 terminata dopo %.0f min: spengo l'alimentatore",
+                               id(stage4_duration).state);
+                  - canbus.send:
+                      use_extended_id: true
+                      can_id: 0x108080FE
+                      data: [0x01, 0x32, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]
+                  - lambda: |-
+                      id(stage4_active)     = false;
+                      id(stage4_forced_off) = true;
+
+            ##################################################################
+            # 3) Corrente da applicare
+            #    - senza fasi attive: quella impostata da te
+            #    - con fasi attive: quella della fase più alta, ma mai sopra
+            #      quella impostata da te
+            #    - dopo lo spegnimento a fine bilanciamento resta la corrente
+            #      della fase 4 finché la batteria non scende sotto la
+            #      tensione di ripartenza
+            ##################################################################
+            - lambda: |-
+                if (std::isnan(id(user_amp))) {
+                  id(user_amp) = id(can_amp_input).state;
+                }
+                float commanded = id(user_amp);
+                if (std::isnan(commanded)) return;
+
+                float stage_amp = NAN;
+                if (id(stage1_active)) stage_amp = id(stage1_current).state;
+                if (id(stage2_active)) stage_amp = id(stage2_current).state;
+                if (id(stage3_active)) stage_amp = id(stage3_current).state;
+                if (id(stage4_active) || id(stage4_forced_off)) stage_amp = id(stage4_current).state;
+                if (!std::isnan(stage_amp) && stage_amp < commanded) {
+                  commanded = stage_amp;
+                }
+
+                // stesso limite per modello usato da "Corrente di carica"
+                float max_amps = 75.0f;
+                const float sf = id(amp_scaling_factor);
+                if (sf >= 18 && sf <= 22) {
+                  max_amps = 50.0f;
+                } else if (sf >= 13 && sf <= 15) {
+                  max_amps = 75.0f;
+                } else if (sf >= 25 && sf <= 35) {
+                  max_amps = 30.0f;
+                }
+                if (commanded > max_amps) commanded = max_amps;
+
+                id(last_staged_current) = commanded;
+                if (std::isnan(id(can_amp_input).state) ||
+                    fabsf(commanded - id(can_amp_input).state) >= 0.05f) {
+                  ESP_LOGI("carica_fasi", "Batteria a %.2f V: corrente %.1f A",
+                           id(output_voltage_sensor).state, commanded);
+                  // on_value di "Corrente di carica" manda il comando CAN
+                  id(can_amp_input).publish_state(commanded);
+                }

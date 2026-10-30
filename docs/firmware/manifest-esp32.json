@@ -1,0 +1,12 @@
+{
+  "name": "R4850G ESPHome - ESP32 DevKit",
+  "version": "12",
+  "home_assistant_domain": "esphome",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [{ "path": "r4850g-esp32-v12.factory.bin", "offset": 0 }]
+    }
+  ]
+}

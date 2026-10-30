@@ -1,0 +1,27 @@
+name: Proponi una nuova funzione
+description: Un'idea per migliorare il firmware o la pagina web
+title: "[Proposta] "
+labels: ["proposta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Le proposte vengono valutate quando c'è tempo. Descrivi a cosa serve la funzione nella pratica: aiuta a capire se può essere utile anche ad altri.
+  - type: textarea
+    id: cosa
+    attributes:
+      label: Cosa vorresti
+    validations:
+      required: true
+  - type: textarea
+    id: perche
+    attributes:
+      label: A cosa ti servirebbe
+      description: Il caso concreto in cui la useresti
+    validations:
+      required: true
+  - type: input
+    id: versione
+    attributes:
+      label: Versione del firmware che usi
+      placeholder: "12"

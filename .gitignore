@@ -1,0 +1,7 @@
+# chiavi e password personali: non vanno mai pubblicate
+secrets.yaml
+# file generati da ESPHome
+.esphome/
+**/.esphome/
+*.bin.tmp
+__pycache__/
