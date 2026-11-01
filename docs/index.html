@@ -4,76 +4,198 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Installa R4850G ESPHome</title>
-<meta name="description" content="Installazione dal browser del firmware ESPHome per alimentatori Huawei R4850G / R48xx">
+<meta name="description" content="Installazione dal browser del firmware ESPHome per alimentatori Huawei R4850G / R48xx, da sola o con Home Assistant">
 <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
 <style>
-:root{color-scheme:light;--bg:#f3f5f8;--card:#fff;--ink:#1c244b;--testo:#324a6d;--muted:#4f6283;--line:#c8d5dc;--acc:#2b5fd9;--warn:#fff5e3}
-@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#11161b;--card:#1a2128;--ink:#e6ebef;--testo:#cfd8e0;--muted:#93a0ab;--line:#2b343d;--acc:#6f9bff;--warn:#3a2c12}}
+:root{color-scheme:light;--qd-bg:#f3f5f8;--qd-card:#fff;--qd-ink:#1c244b;--qd-testo:#324a6d;--qd-muted:#4f6283;--qd-line:#c8d5dc;--qd-soft:#f3f5f8;--qd-acc:#2b5fd9;--qd-acc-soft:#eef3fe;--qd-ok:#1d7a46;--qd-warn-soft:#fff5e3}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--qd-bg:#11161b;--qd-card:#1a2128;--qd-ink:#e6ebef;--qd-testo:#cfd8e0;--qd-muted:#93a0ab;--qd-line:#2b343d;--qd-soft:#141a20;--qd-acc:#6f9bff;--qd-acc-soft:#1c2a45;--qd-ok:#5fc48a;--qd-warn-soft:#3a2c12}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--testo);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-main{max-width:720px;margin:0 auto;padding:28px 16px 40px}
-h1{color:var(--ink);font-size:26px;line-height:1.25;margin:0 0 8px}
-h2{color:var(--ink);font-size:18px;margin:26px 0 8px}
-a{color:var(--acc)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:16px 0}
-.schede{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin:10px 0 16px}
-.schede label{display:block;border:2px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;background:var(--card)}
-.schede input{margin-right:8px;accent-color:var(--acc)}
-.schede label:has(input:checked){border-color:var(--acc)}
-.schede small{display:block;color:var(--muted);margin-top:2px}
-.btn{display:inline-block;background:var(--acc);color:#fff;border:0;border-radius:10px;padding:12px 22px;font:inherit;font-weight:700;cursor:pointer}
-.avviso{background:var(--warn);border-left:5px solid #e0a030;border-radius:10px;padding:12px 16px;margin:16px 0}
-ol li{margin-bottom:6px}
-code{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:.92em}
+body{margin:0;background:var(--qd-bg);color:var(--qd-testo);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+main{max-width:780px;margin:0 auto;padding:28px 16px 40px}
+h1{color:var(--qd-ink);font-size:26px;line-height:1.25;margin:0 0 8px}
+h2{color:var(--qd-ink);font-size:19px;margin:28px 0 8px}
+h3{color:var(--qd-ink);font-size:18px;margin:16px 0 10px}
+p{margin:0 0 1em}
+a{color:var(--qd-acc)}
+ul,ol{padding-left:1.4em}
+code{background:var(--qd-soft);border:1px solid var(--qd-line);border-radius:4px;padding:0 4px;font-size:.9em}
+footer{color:var(--qd-muted);font-size:13px;margin-top:28px}
+/* percorsi di installazione */
+.percorsi{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:1.2em 0 0}
+.percorso-btn{font:inherit;text-align:left;cursor:pointer;border:2px solid var(--qd-line);border-radius:14px;padding:14px 18px;background:var(--qd-card);color:var(--qd-muted)}
+.percorso-btn b{display:block;font-size:1.12em;color:var(--qd-ink);margin-bottom:2px}
+.percorso-btn span{display:block;font-size:.88em;line-height:1.45}
+.percorso-btn.sel{border-color:var(--qd-acc);background:var(--qd-acc-soft)}
+.percorso{border:2px solid var(--qd-acc);border-radius:14px;padding:6px 22px 18px;margin:12px 0 1.2em;background:var(--qd-card)}
+.passi{padding-left:1.6em}
+.passi>li{margin-bottom:1.1em;padding-left:.2em}
+.passi>li::marker{font-weight:700;color:var(--qd-acc)}
+.passi .titolo{display:block;color:var(--qd-ink);font-size:1.03em;margin-bottom:.2em}
+.passi p{margin:0 0 .5em}
+.verifica{font-size:.9em;color:var(--qd-ok);border-left:3px solid var(--qd-ok);padding:2px 0 2px 10px}
+.avanzato{border:1px solid var(--qd-line);border-radius:10px;padding:10px 16px;background:var(--qd-soft)}
+.avanzato summary{cursor:pointer;font-weight:700;color:var(--qd-ink)}
+.avanzato[open] summary{margin-bottom:.6em}
+.installa{margin-top:12px;padding:14px;border-radius:10px;background:var(--qd-soft);border:1px dashed var(--qd-line);text-align:center}
+.installa .nota{font-size:.82em;color:var(--qd-muted);margin:8px 0 0}
+.scelta-scheda{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 16px;margin:0 0 12px;font-size:.92em;font-weight:600}
+.scelta-scheda label{display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:var(--qd-ink)}
+.btn{display:inline-block;background:var(--qd-acc);color:#fff;border:0;border-radius:10px;padding:12px 22px;font:inherit;font-weight:700;cursor:pointer}
+.box{border-radius:12px;padding:14px 18px;margin:1.3em 0;border-left:5px solid}
+.box-warn{background:var(--qd-warn-soft);border-color:#e0a030}
+.box p:last-child,.box ul:last-child{margin-bottom:0}
 esp-web-install-button:not(:defined) [slot]{display:none}
-footer{color:var(--muted);font-size:13px;margin-top:28px}
 </style>
 </head>
 <body>
 <main>
   <h1>Installa il firmware R4850G ESPHome</h1>
-  <p>Firmware per comandare gli alimentatori Huawei R4850G / R48xx via CAN con una scheda ESP32. Questa pagina lo installa direttamente dal browser,
-    senza ESPHome e senza Home Assistant. <a href="https://quellidelfaidate.it/">Descrizione del progetto, componenti e collegamenti</a>.</p>
-
-  <div class="card">
-    <h2 style="margin-top:0">1. Scegli la scheda</h2>
-    <div class="schede" role="radiogroup">
-      <label><input type="radio" name="scheda" value="c3" checked>ESP32-C3 SuperMini<small>CAN su GPIO 4 (TX) e 3 (RX)</small></label>
-      <label><input type="radio" name="scheda" value="atom">M5Stack ATOM Lite<small>CAN su G22 (TX) e G19 (RX)</small></label>
-      <label><input type="radio" name="scheda" value="esp32">ESP32 DevKit<small>CAN su D19 (TX) e D21 (RX)</small></label>
-    </div>
-    <h2>2. Collega la scheda e installa</h2>
-    <p>Collega la scheda al computer con il cavo USB, poi premi il pulsante e scegli la porta della scheda.</p>
-    <esp-web-install-button id="installa" manifest="firmware/manifest-c3.json">
-      <button slot="activate" class="btn" type="button">Installa sulla scheda</button>
-      <span slot="unsupported">Questo browser non può installare firmware: usa Chrome o Edge su un computer.</span>
-      <span slot="not-allowed">La pagina deve essere aperta in HTTPS.</span>
-    </esp-web-install-button>
-    <p><small>L'installazione cancella quello che c'è sulla scheda. Dura circa un minuto.</small></p>
-  </div>
-
-  <h2>3. Collega la scheda al WiFi</h2>
-  <ol>
-    <li>Alla fine dell'installazione il browser propone di scegliere la rete WiFi: scegli la tua e scrivi la password.</li>
-    <li>Se salti questo passo, dopo un minuto e mezzo la scheda crea la rete <code>r4850g-xxxxxx</code>, password <code>r4850g-setup</code>.
-      Collegati con il telefono e scegli la tua rete nella pagina che si apre.</li>
-    <li>Apri la pagina della scheda all'indirizzo che le assegna il router, oppure <code>http://r4850g-xxxxxx.local</code> (le sei cifre sono la fine del MAC).</li>
+  <p>Firmware per comandare gli alimentatori Huawei R4850G / R48xx via CAN con una scheda ESP32. Descrizione del progetto, componenti e schemi
+    dei collegamenti sono nella <a href="https://quellidelfaidate.it/">pagina del progetto su quellidelfaidate.it</a>.</p>
+<p>Ci sono due percorsi. In entrambi il firmware si installa dal browser e la scheda funziona anche da sola; la differenza è se poi la
+  colleghi a Home Assistant. Scegli il tuo e segui i passaggi in ordine: ognuno finisce con un controllo da fare prima di passare al successivo.</p>
+<div class="percorsi" role="tablist" aria-label="Percorso di installazione">
+  <button type="button" role="tab" id="qdfr-tab-solo" aria-controls="qdfr-solo" aria-selected="true" class="percorso-btn sel"><b>Solo scheda ESP</b><span>Pagina web sul telefono o sul computer. Non serve Home Assistant.</span></button>
+  <button type="button" role="tab" id="qdfr-tab-ha" aria-controls="qdfr-ha" aria-selected="false" class="percorso-btn"><b>Con Home Assistant</b><span>In più storico, grafici, dashboard Energia e automazioni.</span></button>
+</div>
+<div class="percorso" id="qdfr-solo" role="tabpanel" aria-labelledby="qdfr-tab-solo">
+  <h3>Percorso 1: solo scheda ESP</h3>
+  <ol class="passi">
+    <li><b class="titolo">Procurati i componenti</b>
+      <p>Scheda ESP32, modulo CAN e un cavo USB che trasmetta dati (alcuni cavi servono solo a ricaricare). L'elenco è nella <a href="https://quellidelfaidate.it/" rel="noopener" target="_blank">pagina del progetto</a>.</p>
+      <p class="verifica">Controllo: collegando la scheda al computer senti il suono di nuova periferica o la vedi tra le porte.</p></li>
+    <li><b class="titolo">Installa il firmware dal browser</b>
+      <p>Dal computer, con Chrome o Edge. La scheda per ora va collegata solo al cavo USB, non all'alimentatore. Scegli il modello e premi il pulsante.</p>
+      <div class="installa">
+        <div class="scelta-scheda" role="radiogroup" aria-label="Scheda da installare">
+          <label><input type="radio" name="qdfr-scheda-a" value="c3" checked> ESP32-C3 SuperMini</label>
+          <label><input type="radio" name="qdfr-scheda-a" value="atom"> M5Stack ATOM Lite</label>
+          <label><input type="radio" name="qdfr-scheda-a" value="esp32"> ESP32 DevKit</label>
+        </div>
+        <esp-web-install-button class="qdfr-installa" manifest="firmware/manifest-c3.json">
+          <button slot="activate" class="btn btn-prim" type="button">Installa sulla scheda</button>
+          <span slot="unsupported">Questo browser non può installare firmware: usa Chrome o Edge su un computer.</span>
+          <span slot="not-allowed">Questa pagina deve essere aperta in HTTPS per installare il firmware.</span>
+        </esp-web-install-button>
+        <p class="nota">L'installazione cancella quello che c'è sulla scheda e dura circa un minuto.</p>
+      </div>
+      <p class="verifica">Controllo: il browser mostra <i>Installation complete</i>. Se la ESP32-C3 non compare tra le porte, scollegala, tieni premuto BOOT, ricollegala e riprova.</p></li>
+    <li><b class="titolo">Collega la scheda al WiFi</b>
+      <p>Subito dopo l'installazione il browser propone di scegliere la rete: scegli la tua e scrivi la password. Se salti il passo, dopo un minuto e mezzo la scheda crea la rete <code>r4850g-xxxxxx</code> (password <code>r4850g-setup</code>): collegati con il telefono e scegli lì la rete di casa.</p>
+      <p class="verifica">Controllo: il browser propone <i>Visit device</i>, oppure la scheda compare nell'elenco dei dispositivi del router.</p></li>
+    <li><b class="titolo">Apri la pagina della scheda</b>
+      <p>Scrivi nel browser l'indirizzo che il router ha dato alla scheda, oppure <code>http://r4850g-xxxxxx.local</code> (le sei cifre sono la fine del MAC, le stesse del nome della rete).</p>
+      <p class="verifica">Controllo: si apre la pagina con gli indicatori. I valori restano vuoti finché l'alimentatore non è collegato: è normale.</p></li>
+    <li><b class="titolo">Fai i collegamenti</b>
+      <p>Scollega la scheda dall'USB e l'alimentatore dalla rete a 230 V. Collega modulo CAN e alimentatore seguendo lo schema della tua scheda nella <a href="https://quellidelfaidate.it/" rel="noopener" target="_blank">pagina del progetto</a> o nel manuale. La batteria resta scollegata.</p>
+      <p class="verifica">Controllo: CAN-H va su CAN-H e CAN-L su CAN-L. Se sono invertiti non si rompe nulla, ma la scheda non riceve dati.</p></li>
+    <li><b class="titolo">Accendi e controlla le letture</b>
+      <p>Dai corrente alla scheda (USB o caricatore) e poi all'alimentatore.</p>
+      <p class="verifica">Controllo: entro qualche secondo nella pagina compaiono tensione di uscita, temperatura e tensione di rete.</p></li>
+    <li><b class="titolo">Imposta tensione e corrente, poi collega la batteria</b>
+      <p>Scrivi la tensione di carica e la corrente massima adatte alla tua batteria, oppure attiva la carica a fasi. Solo dopo collega la batteria, con il fusibile.</p>
+      <p class="verifica">Controllo: la tensione di uscita letta corrisponde a quella impostata prima di collegare la batteria.</p></li>
   </ol>
+  <p>Fatto. Comandi, orari e carica a fasi si gestiscono dalla pagina della scheda. Se un giorno installi Home Assistant non serve rifare nulla:
+    parti dal passaggio 5 del percorso 2.</p>
+</div>
+<div class="percorso" id="qdfr-ha" role="tabpanel" aria-labelledby="qdfr-tab-ha">
+  <h3>Percorso 2: con Home Assistant</h3>
+  <ol class="passi">
+    <li><b class="titolo">Procurati i componenti</b>
+      <p>Scheda ESP32, modulo CAN e un cavo USB che trasmetta dati (alcuni cavi servono solo a ricaricare). L'elenco è nella <a href="https://quellidelfaidate.it/" rel="noopener" target="_blank">pagina del progetto</a>.</p>
+      <p class="verifica">Controllo: collegando la scheda al computer senti il suono di nuova periferica o la vedi tra le porte.</p></li>
+    <li><b class="titolo">Installa il firmware dal browser</b>
+      <p>Dal computer, con Chrome o Edge. La scheda per ora va collegata solo al cavo USB, non all'alimentatore. Scegli il modello e premi il pulsante.</p>
+      <div class="installa">
+        <div class="scelta-scheda" role="radiogroup" aria-label="Scheda da installare">
+          <label><input type="radio" name="qdfr-scheda-b" value="c3" checked> ESP32-C3 SuperMini</label>
+          <label><input type="radio" name="qdfr-scheda-b" value="atom"> M5Stack ATOM Lite</label>
+          <label><input type="radio" name="qdfr-scheda-b" value="esp32"> ESP32 DevKit</label>
+        </div>
+        <esp-web-install-button class="qdfr-installa" manifest="firmware/manifest-c3.json">
+          <button slot="activate" class="btn btn-prim" type="button">Installa sulla scheda</button>
+          <span slot="unsupported">Questo browser non può installare firmware: usa Chrome o Edge su un computer.</span>
+          <span slot="not-allowed">Questa pagina deve essere aperta in HTTPS per installare il firmware.</span>
+        </esp-web-install-button>
+        <p class="nota">L'installazione cancella quello che c'è sulla scheda e dura circa un minuto.</p>
+      </div>
+      <p class="verifica">Controllo: il browser mostra <i>Installation complete</i>. Se la ESP32-C3 non compare tra le porte, scollegala, tieni premuto BOOT, ricollegala e riprova.</p></li>
+    <li><b class="titolo">Collega la scheda al WiFi</b>
+      <p>Subito dopo l'installazione il browser propone di scegliere la rete: scegli la tua e scrivi la password. Se salti il passo, dopo un minuto e mezzo la scheda crea la rete <code>r4850g-xxxxxx</code> (password <code>r4850g-setup</code>): collegati con il telefono e scegli lì la rete di casa.</p>
+      <p class="verifica">Controllo: il browser propone <i>Visit device</i>, oppure la scheda compare nell'elenco dei dispositivi del router.</p></li>
+    <li><b class="titolo">Apri la pagina della scheda</b>
+      <p>Scrivi nel browser l'indirizzo che il router ha dato alla scheda, oppure <code>http://r4850g-xxxxxx.local</code> (le sei cifre sono la fine del MAC, le stesse del nome della rete).</p>
+      <p class="verifica">Controllo: si apre la pagina con gli indicatori. I valori restano vuoti finché l'alimentatore non è collegato: è normale.</p></li>
+    <li><b class="titolo">Aggiungi la scheda a Home Assistant</b>
+      <p>Home Assistant deve essere sulla stessa rete. Apri <b>Impostazioni → Dispositivi e servizi</b>: tra i dispositivi rilevati compare <b>ESPHome r4850g-xxxxxx</b>. Premi <b>Aggiungi</b> e conferma.</p>
+      <p>Se non compare, premi <b>Aggiungi integrazione</b>, scegli <b>ESPHome</b> e scrivi l'indirizzo IP della scheda (porta 6053).</p>
+      <p class="verifica">Controllo: nel dispositivo compaiono le voci della scheda: tensione, corrente, interruttori e impostazioni.</p></li>
+    <li><b class="titolo">Fai i collegamenti</b>
+      <p>Scollega la scheda dall'USB e l'alimentatore dalla rete a 230 V. Collega modulo CAN e alimentatore seguendo lo schema della tua scheda nella <a href="https://quellidelfaidate.it/" rel="noopener" target="_blank">pagina del progetto</a> o nel manuale. La batteria resta scollegata.</p>
+      <p class="verifica">Controllo: CAN-H va su CAN-H e CAN-L su CAN-L. Se sono invertiti non si rompe nulla, ma la scheda non riceve dati.</p></li>
+    <li><b class="titolo">Accendi e controlla le letture</b>
+      <p>Dai corrente alla scheda (USB o caricatore) e poi all'alimentatore.</p>
+      <p class="verifica">Controllo: entro qualche secondo nella pagina compaiono tensione di uscita, temperatura e tensione di rete.</p></li>
+    <li><b class="titolo">Imposta tensione e corrente, poi collega la batteria</b>
+      <p>Scrivi la tensione di carica e la corrente massima adatte alla tua batteria, oppure attiva la carica a fasi. Solo dopo collega la batteria, con il fusibile.</p>
+      <p class="verifica">Controllo: la tensione di uscita letta corrisponde a quella impostata prima di collegare la batteria.</p></li>
+  </ol>
+  <p>Fatto. Le voci della scheda si usano nelle dashboard e nelle automazioni; tensione e corrente si possono aggiungere alla dashboard Energia.
+    Se Home Assistant è spento la scheda continua a controllare la carica da sola.</p>
+  <details class="avanzato">
+    <summary>Vuoi modificare la configurazione? Installazione con ESPHome Device Builder</summary>
+    <p>Serve solo a chi vuole cambiare piedini, nome della scheda o altre parti del file yaml. Per tutti gli altri basta il percorso qui sopra.</p>
+    <ol>
+      <li>Scarica da <a href="https://github.com/tecno-consulenza/r4850g-esphome/tree/main/firmware" rel="noopener" target="_blank">GitHub</a> il file della tua scheda (<code>r4850g-c3.yaml</code>, <code>r4850g-atom.yaml</code> o <code>r4850g-esp32.yaml</code>) e il file della pagina <code>r4850g-web.js</code>.</li>
+      <li>Con il componente aggiuntivo File editor metti <code>r4850g-web.js</code> nella cartella <code>esphome</code> di Home Assistant e aggiungi a <code>secrets.yaml</code> le voci di <code>secrets.example.yaml</code> con i tuoi valori.</li>
+      <li>In Device Builder premi <b>+ New device</b>, dai il nome <code>r4850g</code> e incolla al posto del contenuto proposto quello del file yaml.</li>
+      <li>Premi <b>Install</b>: la prima volta via USB, poi sempre via WiFi. Infine aggiungi la scheda a Home Assistant come al passaggio 5.</li>
+    </ol>
+    <p>Se la scheda era già stata installata dal browser, con Device Builder prende un nome diverso e in Home Assistant compare come dispositivo nuovo:
+      elimina quello vecchio. Il capitolo 3 del manuale descrive ogni passaggio con le immagini.</p>
+  </details>
+</div>
+<div class="box box-warn">
+  <p><b>Gli errori più frequenti</b></p>
+  <ul>
+    <li>Cavo USB solo di ricarica: il browser non trova nessuna porta. Prova un altro cavo.</li>
+    <li>Firefox, Safari o il telefono: non possono installare firmware. Serve Chrome o Edge su un computer.</li>
+    <li>Batteria collegata prima di aver impostato la tensione: l'alimentatore parte con l'ultima tensione che aveva in memoria.</li>
+    <li>Rifare l'installazione con Device Builder dopo quella dal browser senza motivo: si ottengono due dispositivi in Home Assistant.</li>
+  </ul>
+</div>
 
-  <div class="avviso">Il progetto lavora con la rete a 230 V e con correnti continue elevate. Leggi le avvertenze di sicurezza nella
-    <a href="https://quellidelfaidate.it/">pagina del progetto</a> e nel manuale prima di collegare l'alimentatore.</div>
 
-  <h2>Altri file</h2>
-  <p>Manuale in PDF e file per ESPHome Device Builder: <a href="https://github.com/tecno-consulenza/r4850g-esphome/releases/latest">ultimo rilascio su GitHub</a>.
-    Problemi o idee: <a href="https://github.com/tecno-consulenza/r4850g-esphome/issues/new/choose">segnalazioni</a>.</p>
+  <h2>Manuale e file</h2>
+  <p><a href="manuale-r4850g-esphome.pdf">Manuale d'uso in PDF</a> ·
+    <a href="https://github.com/tecno-consulenza/r4850g-esphome/tree/main/firmware">file per ESPHome Device Builder</a> ·
+    <a href="https://github.com/tecno-consulenza/r4850g-esphome/issues/new/choose">segnala un problema o proponi una funzione</a></p>
+  <div class="box box-warn"><p>Il progetto lavora con la rete a 230 V e con correnti continue elevate. Leggi le avvertenze di sicurezza nella
+    <a href="https://quellidelfaidate.it/">pagina del progetto</a> e nel manuale prima di collegare l'alimentatore.</p></div>
   <footer>Licenza MIT · progetto condiviso gratuitamente, fornito così com'è, senza garanzie.</footer>
 </main>
 <script>
-document.querySelectorAll('input[name=scheda]').forEach(function (r) {
-  r.addEventListener('change', function () {
-    document.getElementById('installa').setAttribute('manifest', 'firmware/manifest-' + r.value + '.json');
+(function () {
+  var perc = document.querySelectorAll('.percorso-btn');
+  function mostra(b) {
+    perc.forEach(function (x) {
+      var sel = x === b;
+      x.setAttribute('aria-selected', sel ? 'true' : 'false');
+      x.classList.toggle('sel', sel);
+      var p = document.getElementById(x.getAttribute('aria-controls'));
+      if (p) p.hidden = !sel;
+    });
+  }
+  perc.forEach(function (b) { b.addEventListener('click', function () { mostra(b); }); });
+  if (perc.length) mostra(perc[0]);
+  document.querySelectorAll('.installa').forEach(function (box) {
+    var b = box.querySelector('esp-web-install-button');
+    box.querySelectorAll('input[type=radio]').forEach(function (r) {
+      r.addEventListener('change', function () { b.setAttribute('manifest', 'firmware/manifest-' + r.value + '.json'); });
+    });
   });
-});
+})();
 </script>
 </body>
 </html>
