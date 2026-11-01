@@ -36,6 +36,12 @@ footer{color:var(--qd-muted);font-size:13px;margin-top:28px}
 .scegli{text-align:center;font-size:.92em;color:var(--qd-muted);margin:12px 0 1.2em}
 .cambia{font-size:.9em;color:var(--qd-muted);background:var(--qd-soft);border-radius:8px;padding:8px 12px}
 .vai{font:inherit;font-weight:700;color:var(--qd-acc);background:none;border:0;padding:0;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.sotto{margin:.3em 0 .6em;border:1px dashed var(--qd-line);border-radius:8px;padding:6px 12px;background:var(--qd-card);font-size:.95em}
+.sotto summary{cursor:pointer;color:var(--qd-acc);font-weight:600;padding:8px 28px 8px 0}
+.sotto[open] summary{margin-bottom:.4em}
+.mini{margin:0 0 .5em;padding-left:1.3em}
+.mini li{margin-bottom:.25em}
+pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85em;background:#1c244b;color:#e6ebef;border-radius:8px;padding:10px 12px;overflow-x:auto;margin:0 0 .6em;white-space:pre}
 .avanzato{border:1px solid var(--qd-line);border-radius:10px;padding:10px 16px;background:var(--qd-soft)}
 .avanzato summary{cursor:pointer;font-weight:700;color:var(--qd-ink)}
 .avanzato[open] summary{margin-bottom:.6em}
@@ -151,15 +157,125 @@ esp-web-install-button:not(:defined) [slot]{display:none}
     Se Home Assistant è spento la scheda continua a controllare la carica da sola.</p>
   <details class="avanzato">
     <summary>Vuoi modificare la configurazione? Installazione con ESPHome Device Builder</summary>
-    <p>Serve solo a chi vuole cambiare piedini, nome della scheda o altre parti del file yaml. Per tutti gli altri basta il percorso qui sopra.</p>
-    <ol>
-      <li>Scarica da <a href="https://github.com/tecno-consulenza/r4850g-esphome/tree/main/firmware" rel="noopener" target="_blank">GitHub</a> il file della tua scheda (<code>r4850g-c3.yaml</code>, <code>r4850g-atom.yaml</code> o <code>r4850g-esp32.yaml</code>) e il file della pagina <code>r4850g-web.js</code>.</li>
-      <li>Con il componente aggiuntivo File editor metti <code>r4850g-web.js</code> nella cartella <code>esphome</code> di Home Assistant e aggiungi a <code>secrets.yaml</code> le voci di <code>secrets.example.yaml</code> con i tuoi valori.</li>
-      <li>In Device Builder premi <b>+ New device</b>, dai il nome <code>r4850g</code> e incolla al posto del contenuto proposto quello del file yaml.</li>
-      <li>Premi <b>Install</b>: la prima volta via USB, poi sempre via WiFi. Infine aggiungi la scheda a Home Assistant come al passaggio 5.</li>
+    <p>Serve solo a chi vuole cambiare piedini, nome della scheda o altre parti del file yaml. Per tutti gli altri basta il percorso qui sopra.
+      Apri le voci con la freccia solo se ti servono.</p>
+    <ol class="passi">
+    <li><b class="titolo">Controlla di avere i componenti aggiuntivi</b>
+      <p>In Home Assistant apri <b>Impostazioni</b>. Se nell'elenco c'è la voce <b>Componenti aggiuntivi</b> (nelle versioni più recenti si chiama <b>App</b>), puoi andare avanti.</p>
+      <details class="sotto">
+        <summary>Non c'è la voce Componenti aggiuntivi</summary>
+        <p>Succede se Home Assistant è installato come <i>Container</i> (Docker) o <i>Core</i>: queste versioni non hanno componenti aggiuntivi
+          e quindi nemmeno Device Builder e File editor. In questo caso la strada più semplice è il percorso con installazione dal browser,
+          qui sopra: il risultato in Home Assistant è lo stesso.</p>
+        <p>Chi vuole comunque compilare il firmware deve installare ESPHome sul computer o in un container a parte, seguendo la guida di esphome.io,
+          e mettere i file nella cartella di configurazione di quella installazione.</p>
+      </details>
+      <p class="verifica">Controllo: vedi la voce Componenti aggiuntivi (o App) e, aprendola, il pulsante <b>Store</b> in basso a destra.</p></li>
+    <li><b class="titolo">Installa ESPHome Device Builder, se non c'è</b>
+      <p>Apri <b>Impostazioni → Componenti aggiuntivi</b>. Se tra quelli installati c'è già <b>ESPHome Device Builder</b>, salta al passaggio successivo.</p>
+      <details class="sotto">
+        <summary>Come installare Device Builder</summary>
+        <ol>
+          <li>In <b>Componenti aggiuntivi</b> premi <b>Store</b> in basso a destra.</li>
+          <li>Scrivi <code>ESPHome</code> nella casella di ricerca in alto e apri <b>ESPHome Device Builder</b>.</li>
+          <li>Premi <b>Installa</b> e aspetta: ci vuole qualche minuto.</li>
+          <li>Accendi le opzioni <b>Avvia all'avvio</b> e <b>Mostra nella barra laterale</b>, poi premi <b>Avvia</b>.</li>
+        </ol>
+      </details>
+      <p class="verifica">Controllo: nella barra laterale di sinistra compare la voce <b>ESPHome Builder</b> e, aprendola, una pagina con il pulsante <b>+ New device</b>.</p></li>
+    <li><b class="titolo">Installa File editor, se non c'è</b>
+      <p>File editor serve a mettere il file <code>r4850g-web.js</code> nella cartella di ESPHome. Se nella barra laterale c'è già la voce
+        <b>File editor</b>, salta al passaggio successivo.</p>
+      <details class="sotto">
+        <summary>Come installare File editor</summary>
+        <ol>
+          <li>Apri <b>Impostazioni → Componenti aggiuntivi → Store</b>.</li>
+          <li>Cerca <code>File editor</code> e aprilo.</li>
+          <li>Premi <b>Installa</b>, poi accendi <b>Mostra nella barra laterale</b> e premi <b>Avvia</b>.</li>
+        </ol>
+      </details>
+      <p class="verifica">Controllo: nella barra laterale compare la voce <b>File editor</b>.</p></li>
+    <li><b class="titolo">Scarica il file della pagina sul computer</b>
+      <p>Apri questo collegamento: <a href="https://github.com/tecno-consulenza/r4850g-esphome/raw/main/firmware/r4850g-web.js" rel="noopener" target="_blank">r4850g-web.js</a>. Il browser può scaricare il file
+        oppure mostrare una pagina piena di testo: in questo secondo caso premi <b>Ctrl+S</b> (sul Mac <b>Cmd+S</b>) e salvalo.</p>
+      <p>Il nome deve restare esattamente <code>r4850g-web.js</code>, senza aggiunte.</p>
+      <details class="sotto">
+        <summary>Il file si chiama in modo diverso</summary>
+        <ul>
+          <li><code>r4850g-web(1).js</code>: l'avevi già scaricato una volta. Cancella il vecchio e rinomina il nuovo togliendo <code>(1)</code>.</li>
+          <li><code>r4850g-web.js.txt</code>: il browser ha aggiunto <code>.txt</code>. Su Windows le estensioni sono nascoste: in Esplora file apri il menu
+            <b>Visualizza</b> e accendi <b>Estensioni nomi file</b>, poi rinomina il file togliendo <code>.txt</code>.</li>
+        </ul>
+      </details>
+      <p class="verifica">Controllo: nella cartella Download c'è il file <code>r4850g-web.js</code>.</p></li>
+    <li><b class="titolo">Carica il file con File editor</b>
+      <ol class="mini">
+        <li>Apri <b>File editor</b> dalla barra laterale.</li>
+        <li>Premi l'icona della <b>cartella</b> in alto a sinistra: si apre l'elenco dei file di Home Assistant.</li>
+        <li>Premi sulla cartella <b>esphome</b> per entrarci.</li>
+        <li>Premi l'icona con la <b>freccia verso l'alto</b> (carica file) in cima all'elenco, scegli <code>r4850g-web.js</code> dalla cartella Download e conferma.</li>
+      </ol>
+      <details class="sotto">
+        <summary>Non trovo la cartella esphome</summary>
+        <p>La cartella viene creata da Device Builder la prima volta che lo apri. Apri ESPHome Builder dalla barra laterale, aspetta che
+          compaia la pagina con <b>+ New device</b>, poi torna in File editor e ricarica l'elenco.</p>
+      </details>
+      <details class="sotto">
+        <summary>Preferisco copiare e incollare il testo</summary>
+        <ol>
+          <li>Apri il collegamento del passaggio 4: si vede il testo del file. Premi <b>Ctrl+A</b> per selezionare tutto e <b>Ctrl+C</b> per copiarlo.</li>
+          <li>In File editor, dentro la cartella <b>esphome</b>, premi l'icona del <b>foglio con il +</b> (nuovo file) e scrivi il nome <code>r4850g-web.js</code>.</li>
+          <li>Premi nel riquadro vuoto, poi <b>Ctrl+V</b> per incollare e l'icona del <b>dischetto</b> rossa in alto per salvare.</li>
+        </ol>
+      </details>
+      <p class="verifica">Controllo: nell'elenco della cartella esphome compare <code>r4850g-web.js</code>. Premendoci sopra si vede il testo del file, che comincia con alcune righe di commento.</p></li>
+    <li><b class="titolo">Crea il dispositivo in Device Builder</b>
+      <ol class="mini">
+        <li>Apri <b>ESPHome Builder</b> e premi <b>+ New device</b>, poi <b>Continue</b>.</li>
+        <li>Scegli <b>New device setup</b> (o <b>Empty configuration</b>, se compare), dai il nome <code>r4850g</code> e scegli il tipo di scheda:
+          <b>ESP32-C3</b> per la SuperMini, <b>ESP32</b> per ATOM Lite e DevKit.</li>
+        <li>Alla fine Device Builder mostra una <b>chiave di cifratura</b> (encryption key): copiala e tienila da parte, serve al passaggio 7. Premi <b>Skip</b>.</li>
+      </ol>
+
+      <p class="verifica">Controllo: nella pagina di ESPHome Builder compare il riquadro <b>r4850g</b>.</p></li>
+    <li><b class="titolo">Scrivi le password in secrets.yaml</b>
+      <p>In alto a destra in ESPHome Builder premi <b>Secrets</b>. Si apre il file con le password; aggiungi in fondo queste righe con i tuoi valori
+        (se <code>wifi_ssid</code> e <code>wifi_password</code> ci sono già, non ripeterle):</p>
+      <pre>wifi_ssid: "NomeDellaTuaRete"
+wifi_password: "PasswordDellaTuaRete"
+ap_password: "almeno-8-caratteri"
+api_encryption_key: "la-chiave-copiata-al-passaggio-6"</pre>
+      <p>Premi <b>Save</b> e chiudi.</p>
+
+      <p class="verifica">Controllo: le virgolette sono tutte chiuse e ogni voce è su una riga a sé, che comincia senza spazi.</p></li>
+    <li><b class="titolo">Incolla la configurazione della scheda</b>
+      <ol class="mini">
+        <li>Apri il file della tua scheda e copia tutto il testo (Ctrl+A, Ctrl+C):
+          <a href="https://github.com/tecno-consulenza/r4850g-esphome/raw/main/firmware/r4850g-c3.yaml" rel="noopener" target="_blank">ESP32-C3 SuperMini</a> ·
+          <a href="https://github.com/tecno-consulenza/r4850g-esphome/raw/main/firmware/r4850g-atom.yaml" rel="noopener" target="_blank">ATOM Lite</a> ·
+          <a href="https://github.com/tecno-consulenza/r4850g-esphome/raw/main/firmware/r4850g-esp32.yaml" rel="noopener" target="_blank">ESP32 DevKit</a>.</li>
+        <li>Nel riquadro <b>r4850g</b> premi <b>Edit</b>, cancella tutto il testo proposto (Ctrl+A, Canc) e incolla (Ctrl+V).</li>
+        <li>Premi <b>Save</b>.</li>
+      </ol>
+
+      <p class="verifica">Controllo: in basso nell'editor non compaiono righe rosse. Se una voce di secrets manca, la riga che la usa viene segnata.</p></li>
+    <li><b class="titolo">Installa sulla scheda</b>
+      <p>Premi <b>Install</b>. La prima volta collega la scheda con il cavo USB al computer da cui stai usando Home Assistant e scegli
+        <b>Plug into this computer</b>; se non funziona scegli <b>Manual download</b> e carica il file scaricato da
+        <a href="https://web.esphome.io/" rel="noopener" target="_blank">web.esphome.io</a>. Dalla volta successiva scegli <b>Wirelessly</b>.</p>
+      <p>La prima compilazione dura parecchi minuti: è normale. Poi aggiungi la scheda a Home Assistant come al passaggio 5 del percorso.</p>
+      <details class="sotto">
+        <summary>La compilazione si ferma con un errore</summary>
+        <ul>
+          <li><code>Could not find file ... r4850g-web.js</code>: il file non è nella cartella esphome o ha un nome diverso. Rifai i passaggi 4 e 5.</li>
+          <li><code>Secret ... not defined</code>: in secrets.yaml manca la voce indicata. Rifai il passaggio 7.</li>
+          <li><code>Invalid key</code> sulla chiave di cifratura: la chiave deve essere quella completa, con il segno <code>=</code> finale.</li>
+        </ul>
+      </details>
+      <p class="verifica">Controllo: nel registro compare <i>INFO Successfully uploaded program</i> e il riquadro r4850g diventa <b>Online</b>.</p></li>
     </ol>
     <p>Se la scheda era già stata installata dal browser, con Device Builder prende un nome diverso e in Home Assistant compare come dispositivo nuovo:
-      elimina quello vecchio. Il capitolo 3 del manuale descrive ogni passaggio con le immagini.</p>
+      elimina quello vecchio.</p>
   </details>
 </div>
 <div class="box box-warn">
