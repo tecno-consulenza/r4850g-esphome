@@ -33,6 +33,9 @@ footer{color:var(--qd-muted);font-size:13px;margin-top:28px}
 .passi .titolo{display:block;color:var(--qd-ink);font-size:1.03em;margin-bottom:.2em}
 .passi p{margin:0 0 .5em}
 .verifica{font-size:.9em;color:var(--qd-ok);border-left:3px solid var(--qd-ok);padding:2px 0 2px 10px}
+.scegli{text-align:center;font-size:.92em;color:var(--qd-muted);margin:12px 0 1.2em}
+.cambia{font-size:.9em;color:var(--qd-muted);background:var(--qd-soft);border-radius:8px;padding:8px 12px}
+.vai{font:inherit;font-weight:700;color:var(--qd-acc);background:none;border:0;padding:0;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .avanzato{border:1px solid var(--qd-line);border-radius:10px;padding:10px 16px;background:var(--qd-soft)}
 .avanzato summary{cursor:pointer;font-weight:700;color:var(--qd-ink)}
 .avanzato[open] summary{margin-bottom:.6em}
@@ -55,11 +58,13 @@ esp-web-install-button:not(:defined) [slot]{display:none}
 <p>Ci sono due percorsi. In entrambi il firmware si installa dal browser e la scheda funziona anche da sola; la differenza è se poi la
   colleghi a Home Assistant. Scegli il tuo e segui i passaggi in ordine: ognuno finisce con un controllo da fare prima di passare al successivo.</p>
 <div class="percorsi" role="tablist" aria-label="Percorso di installazione">
-  <button type="button" role="tab" id="qdfr-tab-solo" aria-controls="qdfr-solo" aria-selected="true" class="percorso-btn sel"><b>Solo scheda ESP</b><span>Pagina web sul telefono o sul computer. Non serve Home Assistant.</span></button>
+  <button type="button" role="tab" id="qdfr-tab-solo" aria-controls="qdfr-solo" aria-selected="false" class="percorso-btn"><b>Solo scheda ESP</b><span>Pagina web sul telefono o sul computer. Non serve Home Assistant.</span></button>
   <button type="button" role="tab" id="qdfr-tab-ha" aria-controls="qdfr-ha" aria-selected="false" class="percorso-btn"><b>Con Home Assistant</b><span>In più storico, grafici, dashboard Energia e automazioni.</span></button>
 </div>
+<p class="scegli" id="qdfr-scegli">Premi uno dei due riquadri per vedere i passaggi.</p>
 <div class="percorso" id="qdfr-solo" role="tabpanel" aria-labelledby="qdfr-tab-solo">
   <h3>Percorso 1: solo scheda ESP</h3>
+  <p class="cambia">Vuoi usare anche Home Assistant? <button type="button" class="vai" data-vai="qdfr-tab-ha">Passa al percorso con Home Assistant</button></p>
   <ol class="passi">
     <li><b class="titolo">Procurati i componenti</b>
       <p>Scheda ESP32, modulo CAN e un cavo USB che trasmetta dati (alcuni cavi servono solo a ricaricare). L'elenco è nella <a href="https://quellidelfaidate.it/" rel="noopener" target="_blank">pagina del progetto</a>.</p>
@@ -101,6 +106,7 @@ esp-web-install-button:not(:defined) [slot]{display:none}
 </div>
 <div class="percorso" id="qdfr-ha" role="tabpanel" aria-labelledby="qdfr-tab-ha">
   <h3>Percorso 2: con Home Assistant</h3>
+  <p class="cambia">Non usi Home Assistant? <button type="button" class="vai" data-vai="qdfr-tab-solo">Passa al percorso solo scheda ESP</button></p>
   <ol class="passi">
     <li><b class="titolo">Procurati i componenti</b>
       <p>Scheda ESP32, modulo CAN e un cavo USB che trasmetta dati (alcuni cavi servono solo a ricaricare). L'elenco è nella <a href="https://quellidelfaidate.it/" rel="noopener" target="_blank">pagina del progetto</a>.</p>
@@ -186,9 +192,19 @@ esp-web-install-button:not(:defined) [slot]{display:none}
       var p = document.getElementById(x.getAttribute('aria-controls'));
       if (p) p.hidden = !sel;
     });
+    var sc = document.getElementById('qdfr-scegli');
+    if (sc) sc.hidden = !!b;
   }
   perc.forEach(function (b) { b.addEventListener('click', function () { mostra(b); }); });
-  if (perc.length) mostra(perc[0]);
+  mostra(null);
+  document.querySelectorAll('.vai').forEach(function (v) {
+    v.addEventListener('click', function () {
+      var b = document.getElementById(v.getAttribute('data-vai'));
+      if (!b) return;
+      mostra(b);
+      b.parentNode.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
   document.querySelectorAll('.installa').forEach(function (box) {
     var b = box.querySelector('esp-web-install-button');
     box.querySelectorAll('input[type=radio]').forEach(function (r) {
