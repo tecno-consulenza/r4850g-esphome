@@ -7,8 +7,8 @@
 <meta name="description" content="Installazione dal browser del firmware ESPHome per alimentatori Huawei R4850G / R48xx, da sola o con Home Assistant">
 <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
 <style>
-:root{color-scheme:light;--qd-bg:#f3f5f8;--qd-card:#fff;--qd-ink:#1c244b;--qd-testo:#324a6d;--qd-muted:#4f6283;--qd-line:#c8d5dc;--qd-soft:#f3f5f8;--qd-acc:#2b5fd9;--qd-acc-soft:#eef3fe;--qd-ok:#1d7a46;--qd-warn-soft:#fff5e3}
-@media (prefers-color-scheme:dark){:root{color-scheme:dark;--qd-bg:#11161b;--qd-card:#1a2128;--qd-ink:#e6ebef;--qd-testo:#cfd8e0;--qd-muted:#93a0ab;--qd-line:#2b343d;--qd-soft:#141a20;--qd-acc:#6f9bff;--qd-acc-soft:#1c2a45;--qd-ok:#5fc48a;--qd-warn-soft:#3a2c12}}
+:root{color-scheme:light;--qd-bg:#f3f5f8;--qd-card:#fff;--qd-ink:#1c244b;--qd-testo:#324a6d;--qd-muted:#4f6283;--qd-line:#c8d5dc;--qd-soft:#f3f5f8;--qd-acc:#2b5fd9;--qd-acc-soft:#eef3fe;--qd-ok:#1d7a46;--qd-err:#b42318;--qd-warn-soft:#fff5e3}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--qd-bg:#11161b;--qd-card:#1a2128;--qd-ink:#e6ebef;--qd-testo:#cfd8e0;--qd-muted:#93a0ab;--qd-line:#2b343d;--qd-soft:#141a20;--qd-acc:#6f9bff;--qd-acc-soft:#1c2a45;--qd-ok:#5fc48a;--qd-err:#ff8a80;--qd-warn-soft:#3a2c12}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--qd-bg);color:var(--qd-testo);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 main{max-width:780px;margin:0 auto;padding:28px 16px 40px}
@@ -42,6 +42,20 @@ footer{color:var(--qd-muted);font-size:13px;margin-top:28px}
 .mini{margin:0 0 .5em;padding-left:1.3em}
 .mini li{margin-bottom:.25em}
 pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85em;background:#1c244b;color:#e6ebef;border-radius:8px;padding:10px 12px;overflow-x:auto;margin:0 0 .6em;white-space:pre}
+.dashha code{overflow-wrap:anywhere;word-break:break-all}
+.dashha{border:1px solid var(--qd-line);border-radius:10px;padding:10px 16px;background:var(--qd-soft);margin:0 0 .8em}
+.dashha summary{cursor:pointer;font-weight:700;color:var(--qd-ink)}
+.dashha[open]>summary{margin-bottom:.6em}
+.gen{border:1px solid var(--qd-line);border-radius:10px;padding:14px 16px;background:var(--qd-card);margin:.4em 0 .6em}
+.gen label{display:block;margin-bottom:6px;color:var(--qd-ink)}
+.gen-in{width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em;padding:10px 12px;border:2px solid var(--qd-line);border-radius:8px;background:var(--qd-card);color:var(--qd-ink)}
+.gen-in:focus{outline:none;border-color:var(--qd-acc)}
+.gen-err{color:var(--qd-err);margin:.5em 0 0;font-size:.9em}
+.gen-ok{color:var(--qd-ok);margin:.5em 0 0;font-size:.9em}
+.gen-az{margin-top:12px}
+.gen-btn{font:inherit;font-weight:700;font-size:.95em;padding:10px 16px;border-radius:10px;cursor:pointer;margin:0 10px 8px 0;border:2px solid var(--qd-acc)}
+.gen-prim{background:var(--qd-acc);color:#fff}
+.gen-sec{background:var(--qd-card);color:var(--qd-acc)}
 .avanzato{border:1px solid var(--qd-line);border-radius:10px;padding:10px 16px;background:var(--qd-soft)}
 .avanzato summary{cursor:pointer;font-weight:700;color:var(--qd-ink)}
 .avanzato[open] summary{margin-bottom:.6em}
@@ -155,6 +169,65 @@ esp-web-install-button:not(:defined) [slot]{display:none}
   </ol>
   <p>Fatto. Le voci della scheda si usano nelle dashboard e nelle automazioni; tensione e corrente si possono aggiungere alla dashboard Energia.
     Se Home Assistant è spento la scheda continua a controllare la carica da sola.</p>
+  <details class="dashha">
+    <summary>Vuoi una dashboard in Home Assistant? Quadranti, grafici e comandi</summary>
+    <p>La dashboard mostra tensione, corrente, potenza, grafici e comandi direttamente in Home Assistant, anche da fuori casa. Serve un file con i nomi delle voci
+      della tua scheda: lo prepara questa pagina. Per farlo servono tre passaggi, da fare dopo che la scheda è comparsa in Home Assistant.</p>
+    <ol class="passi">
+    <li><b class="titolo">Copia il nome di una voce della scheda</b>
+      <ol class="mini">
+        <li>In Home Assistant apri <b>Impostazioni → Dispositivi e servizi → Entità</b>.</li>
+        <li>Nella casella di ricerca scrivi <code>Corrente AC</code> e premi sulla voce della tua scheda.</li>
+        <li>Premi l'icona a forma di <b>ingranaggio</b> (Impostazioni) e copia il testo del campo <b>ID entità</b>: per esempio <code>sensor.nome_scheda_corrente_ac</code>.</li>
+      </ol>
+      <details class="sotto">
+        <summary>La ricerca non trova niente, oppure trovo due voci</summary>
+        <p>Se non trova niente, la scheda non è ancora stata aggiunta a Home Assistant (passaggio 5 di questo percorso) oppure è spenta.
+          Se ne trova due, hai due schede: scegli quella giusta guardando il nome del dispositivo.</p>
+      </details>
+      <p class="verifica">Controllo: l'ID comincia con <code>sensor.</code> e finisce con <code>_corrente_ac</code>.</p></li>
+    <li><b class="titolo">Incollalo qui e scarica il file</b>
+      <p>Incolla l'ID nella casella. Non serve togliere niente: la pagina riconosce da sola il nome della scheda, e funziona anche se incolli
+        l'ID di un'altra voce, di un pulsante o di un numero.</p>
+      <div class="gen">
+        <label for="qdfr-gen-in"><b>ID entità copiato da Home Assistant</b></label>
+        <input type="text" id="qdfr-gen-in" class="gen-in" placeholder="sensor.nome_scheda_corrente_ac" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <p class="gen-err" id="qdfr-gen-err" hidden></p>
+        <p class="gen-ok" id="qdfr-gen-ok" hidden></p>
+        <div class="gen-az">
+          <button type="button" class="gen-btn gen-prim" id="qdfr-gen-dl">Scarica la dashboard</button>
+          <button type="button" class="gen-btn gen-sec" id="qdfr-gen-cp">Copia il testo</button>
+        </div>
+      </div>
+      <details class="sotto">
+        <summary>Il file non si scarica, oppure voglio solo il testo</summary>
+        <p>Premi <b>Copia il testo</b>: il testo finisce negli appunti e lo incolli direttamente al passaggio 3, senza scaricare niente.</p>
+      </details>
+      <p class="verifica">Controllo: sotto la casella compare in verde «Nome riconosciuto» con il nome della tua scheda. Il file si chiama <code>dashboard-r4850g.yaml</code>.</p></li>
+    <li><b class="titolo">Crea la dashboard in Home Assistant</b>
+      <ol class="mini">
+        <li>Apri <b>Impostazioni → Dashboard → Aggiungi dashboard</b> e scegli <b>Nuova dashboard da zero</b>. Come titolo scrivi «Alimentatore R4850G» e premi <b>Crea</b>.</li>
+        <li>Apri la nuova dashboard dalla barra laterale e premi la <b>matita</b> in alto a destra. Se Home Assistant chiede di prendere il controllo della dashboard, conferma.</li>
+        <li>Premi i <b>tre puntini</b> in alto a destra e scegli l'editor di configurazione grezzo (in inglese <i>Raw configuration editor</i>).</li>
+        <li>Cancella tutto il testo (Ctrl+A, poi Canc), incolla il contenuto del file (Ctrl+V) e premi <b>Salva</b>. Poi chiudi l'editor.</li>
+      </ol>
+      <details class="sotto">
+        <summary>Alcune voci mostrano «Entità non disponibile»</summary>
+        <p>Può dipendere da tre cose:</p>
+        <ul>
+          <li>l'ID copiato al passaggio 1 non era quello della tua scheda: rifai il passaggio 1 e 2 con l'ID giusto, e incolla di nuovo il testo;</li>
+          <li>la scheda è spenta o non collegata al WiFi: i valori ricompaiono appena torna online;</li>
+          <li>la scheda ha un firmware precedente alla versione 12, dove alcune voci avevano nomi diversi: aggiornala dal browser o con Device Builder.</li>
+        </ul>
+      </details>
+      <details class="sotto">
+        <summary>Salvando compare un errore</summary>
+        <p>Quasi sempre il testo incollato è incompleto o è rimasto del testo vecchio. Cancella tutto con Ctrl+A e Canc, incolla di nuovo il contenuto
+          del file e salva.</p>
+      </details>
+      <p class="verifica">Controllo: in alto compaiono le pagine Principale, Carica a fasi, Orari e Impostazioni, e nella pagina Principale i quadranti con i valori della scheda.</p></li>
+    </ol>
+  </details>
   <details class="avanzato">
     <summary>Vuoi modificare la configurazione? Installazione con ESPHome Device Builder</summary>
     <p>Serve solo a chi vuole cambiare piedini, nome della scheda o altre parti del file yaml. Per tutti gli altri basta il percorso qui sopra.
@@ -327,6 +400,81 @@ api_encryption_key: "la-chiave-copiata-al-passaggio-6"</pre>
       r.addEventListener('change', function () { b.setAttribute('manifest', 'firmware/manifest-' + r.value + '.json'); });
     });
   });
+  // generatore della dashboard per Home Assistant
+  (function (root) {
+    var inp = root.querySelector('#qdfr-gen-in');
+    if (!inp) return;
+    var MODELLO = "# Dashboard R4850G per Home Assistant (versione 1)\n# Le voci hanno il prefisso __PREFISSO__, per esempio sensor.__PREFISSO___corrente_ac.\n# Come usarla: Impostazioni -> Dashboard -> Aggiungi dashboard -> Nuova dashboard da zero,\n# poi matita in alto a destra -> tre puntini -> editor di configurazione grezzo (Raw configuration editor),\n# cancella tutto, incolla questo testo e salva.\ntitle: Alimentatore R4850G\nviews:\n  - title: Principale\n    path: principale\n    icon: mdi:flash\n    max_columns: 3\n    cards:\n      - type: tile\n        entity: sensor.__PREFISSO___stato_alimentatore\n        name: Stato\n        icon: mdi:power-plug\n        vertical: false\n        features_position: bottom\n      - type: horizontal-stack\n        cards:\n          - type: button\n            entity: button.__PREFISSO___accendi\n            name: Accendi\n            icon: mdi:power\n            show_state: false\n            tap_action:\n              action: toggle\n          - type: button\n            entity: button.__PREFISSO___spegni\n            name: Spegni\n            icon: mdi:power-off\n            show_state: false\n            tap_action:\n              action: toggle\n      - type: horizontal-stack\n        cards:\n          - type: gauge\n            entity: sensor.__PREFISSO___tensione_dc\n            name: Tensione\n            min: 48\n            max: 58\n            needle: true\n          - type: gauge\n            entity: sensor.__PREFISSO___corrente_dc\n            name: Corrente\n            min: 0\n            max: 50\n            needle: true\n      - type: horizontal-stack\n        cards:\n          - type: gauge\n            entity: sensor.__PREFISSO___potenza_dc\n            name: Potenza\n            min: 0\n            max: 3000\n            needle: true\n          - type: gauge\n            entity: sensor.__PREFISSO___rendimento\n            name: Rendimento\n            min: 80\n            max: 100\n            needle: true\n      - type: entities\n        title: Regolazioni\n        show_header_toggle: false\n        entities:\n          - entity: number.__PREFISSO___tensione_di_carica\n          - entity: number.__PREFISSO___corrente_di_carica\n          - entity: number.__PREFISSO___limite_rete_ac\n          - type: divider\n          - entity: switch.__PREFISSO___carica_a_fasi_attiva\n          - entity: sensor.__PREFISSO___fase_attiva\n      - type: entities\n        title: Energia\n        entities:\n          - entity: sensor.__PREFISSO___energia_erogata\n          - entity: sensor.__PREFISSO___energia_dalla_rete\n          - entity: sensor.__PREFISSO___rendimento_medio\n          - entity: sensor.__PREFISSO___perdite\n        footer:\n          type: buttons\n          entities:\n            - entity: button.__PREFISSO___azzera_energia\n              name: Azzera\n              icon: mdi:restart\n      - type: entities\n        title: Rete elettrica\n        entities:\n          - entity: sensor.__PREFISSO___tensione_ac\n          - entity: sensor.__PREFISSO___corrente_ac\n          - entity: sensor.__PREFISSO___potenza_ac\n          - entity: sensor.__PREFISSO___frequenza_ac\n      - type: entities\n        title: Temperature e ventola\n        entities:\n          - entity: sensor.__PREFISSO___temp_ingresso\n          - entity: sensor.__PREFISSO___temp_uscita\n          - entity: sensor.__PREFISSO___giri_ventola\n          - entity: number.__PREFISSO___ventola_minima\n        footer:\n          type: buttons\n          entities:\n            - entity: button.__PREFISSO___ventola_al_massimo\n              name: Massimo\n              icon: mdi:fan-plus\n            - entity: button.__PREFISSO___ventola_automatica\n              name: Automatica\n              icon: mdi:fan-auto\n      - type: history-graph\n        title: Tensione e corrente (24 ore)\n        hours_to_show: 24\n        entities:\n          - entity: sensor.__PREFISSO___tensione_dc\n          - entity: sensor.__PREFISSO___corrente_dc\n      - type: history-graph\n        title: Potenza (24 ore)\n        hours_to_show: 24\n        entities:\n          - entity: sensor.__PREFISSO___potenza_dc\n          - entity: sensor.__PREFISSO___potenza_ac\n      - type: history-graph\n        title: Temperature (24 ore)\n        hours_to_show: 24\n        entities:\n          - entity: sensor.__PREFISSO___temp_ingresso\n          - entity: sensor.__PREFISSO___temp_uscita\n\n  - title: Carica a fasi\n    path: fasi\n    icon: mdi:stairs-up\n    cards:\n      - type: entities\n        title: Carica a fasi\n        show_header_toggle: false\n        entities:\n          - entity: switch.__PREFISSO___carica_a_fasi_attiva\n          - entity: sensor.__PREFISSO___fase_attiva\n          - entity: number.__PREFISSO___ripartenza_fasi\n      - type: entities\n        title: Fase 1\n        entities:\n          - entity: number.__PREFISSO___fase_1_tensione\n          - entity: number.__PREFISSO___fase_1_corrente\n      - type: entities\n        title: Fase 2\n        entities:\n          - entity: number.__PREFISSO___fase_2_tensione\n          - entity: number.__PREFISSO___fase_2_corrente\n      - type: entities\n        title: Fase 3\n        entities:\n          - entity: number.__PREFISSO___fase_3_tensione\n          - entity: number.__PREFISSO___fase_3_corrente\n      - type: entities\n        title: Fase 4\n        entities:\n          - entity: number.__PREFISSO___fase_4_tensione\n          - entity: number.__PREFISSO___fase_4_corrente\n          - entity: number.__PREFISSO___fase_4_durata\n\n  - title: Orari\n    path: orari\n    icon: mdi:clock-outline\n    cards:\n      - type: entities\n        title: Accensione e spegnimento programmati\n        show_header_toggle: false\n        entities:\n          - entity: number.__PREFISSO___accendi_ora\n          - entity: number.__PREFISSO___accendi_minuti\n          - entity: sensor.__PREFISSO___accende_fra\n          - type: divider\n          - entity: number.__PREFISSO___spegni_ora\n          - entity: number.__PREFISSO___spegni_minuti\n          - entity: sensor.__PREFISSO___spegne_fra\n          - type: divider\n          - entity: sensor.__PREFISSO___ora_attuale\n          - entity: sensor.__PREFISSO___fonte_ora\n\n  - title: Impostazioni\n    path: impostazioni\n    icon: mdi:cog\n    cards:\n      - type: entities\n        title: Valori di riserva\n        entities:\n          - entity: number.__PREFISSO___tensione_di_riserva\n          - entity: number.__PREFISSO___corrente_di_riserva\n        footer:\n          type: buttons\n          entities:\n            - entity: button.__PREFISSO___valori_16_celle\n              name: 16 celle\n            - entity: button.__PREFISSO___valori_15_celle\n              name: 15 celle\n            - entity: button.__PREFISSO___salva_valori\n              name: Salva\n            - entity: button.__PREFISSO___richiama_valori\n              name: Richiama\n      - type: entities\n        title: Alimentatore\n        entities:\n          - entity: sensor.__PREFISSO___modello\n          - entity: sensor.__PREFISSO___n_di_serie\n          - entity: sensor.__PREFISSO___codice_articolo\n          - entity: sensor.__PREFISSO___data_produzione\n          - entity: sensor.__PREFISSO___ore_di_lavoro\n          - entity: sensor.__PREFISSO___stato_bus_can\n          - entity: sensor.__PREFISSO___messaggi_can\n        footer:\n          type: buttons\n          entities:\n            - entity: button.__PREFISSO___rileva_alimentatore\n              name: Rileva alimentatore\n      - type: entities\n        title: Scheda\n        entities:\n          - entity: sensor.__PREFISSO___segnale_wifi\n          - entity: sensor.__PREFISSO___indirizzo_ip\n          - entity: sensor.__PREFISSO___rete_wifi_collegata\n        footer:\n          type: buttons\n          entities:\n            - entity: button.__PREFISSO___riavvia_scheda\n              name: Riavvia\n";
+    var SLUGS = ["valori_di_riserva_e_ventola", "informazioni_e_diagnostica", "collegati_alla_rete_wifi", "fattore_di_scala_interno", "invia_ora_le_statistiche", "applica_impostazioni_ip", "programmazione_oraria", "statistiche_rifiutate", "carica_a_fasi_attiva", "corrente_di_riserva", "rete_wifi_collegata", "rileva_alimentatore", "statistiche_anonime", "tensione_di_riserva", "codice_statistiche", "corrente_dc_rapida", "corrente_di_carica", "energia_dalla_rete", "scelta_statistiche", "stato_alimentatore", "tensione_di_carica", "ventola_al_massimo", "ventola_automatica", "configurazione_ip", "corrente_nominale", "esito_statistiche", "fattore_di_scala", "limite_dc_attivo", "maschera_di_rete", "rendimento_medio", "codice_articolo", "data_produzione", "energia_erogata", "fase_1_corrente", "fase_1_tensione", "fase_2_corrente", "fase_2_tensione", "fase_3_corrente", "fase_3_tensione", "fase_4_corrente", "fase_4_tensione", "richiama_valori", "ripartenza_fasi", "valori_15_celle", "valori_16_celle", "accendi_minuti", "azzera_energia", "limite_rete_ac", "minuti_manuali", "riavvia_scheda", "ventola_minima", "carica_a_fasi", "fase_4_durata", "indirizzo_mac", "ore_di_lavoro", "password_wifi", "spegni_minuti", "stato_bus_can", "temp_ingresso", "frequenza_ac", "giri_ventola", "indirizzo_ip", "messaggi_can", "salva_valori", "segnale_wifi", "accende_fra", "accendi_ora", "corrente_ac", "corrente_dc", "descrizione", "fase_attiva", "modalita_ip", "ora_attuale", "ora_manuale", "temp_uscita", "tensione_ac", "tensione_dc", "esito_rete", "ip_statico", "n_di_serie", "potenza_ac", "potenza_dc", "rendimento", "server_ntp", "spegne_fra", "spegni_ora", "fonte_ora", "rete_wifi", "accendi", "comandi", "gateway", "modello", "perdite", "spegni", "dns_1", "dns_2", "stato"];
+    var err = root.querySelector('#qdfr-gen-err');
+    var ok = root.querySelector('#qdfr-gen-ok');
+    var bordo = inp.style.borderColor;
+
+    function ricava(v) {
+      v = (v || '').replace(/^\s+|\s+$/g, '').toLowerCase();
+      if (!v) return { err: 'Incolla qui l\'ID di una voce della scheda, per esempio sensor.nome_scheda_corrente_ac.' };
+      v = v.replace(/^[a-z_]+\./, '');
+      v = v.replace(/[\s\-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+      if (!v || !/^[a-z0-9_]+$/.test(v)) {
+        return { err: 'Nell\'ID ci sono caratteri che non vanno bene: servono solo lettere, numeri e trattini bassi. Copia l\'ID così com\'è in Home Assistant.' };
+      }
+      for (var i = 0; i < SLUGS.length; i++) {
+        var s = SLUGS[i];
+        if (v === s) return { err: 'Manca il nome della scheda: l\'ID deve avere qualcosa prima di «' + s + '».' };
+        if (v.length > s.length + 1 && v.slice(-(s.length + 1)) === '_' + s) { v = v.slice(0, -(s.length + 1)); break; }
+      }
+      return { p: v };
+    }
+    function testo(p) { return MODELLO.split('__PREFISSO__').join(p); }
+    function mostraErrore(m) {
+      err.textContent = m; err.hidden = false; ok.hidden = true;
+      inp.style.borderColor = '#b42318';
+      inp.setAttribute('aria-invalid', 'true');
+      try { inp.focus(); } catch (e) {}
+    }
+    function pulisci() {
+      err.hidden = true; inp.style.borderColor = bordo; inp.removeAttribute('aria-invalid');
+    }
+    function anteprima() {
+      pulisci();
+      var r = ricava(inp.value);
+      if (inp.value.replace(/\s+/g, '') === '') { ok.hidden = true; return; }
+      if (r.err) { ok.hidden = true; return; }
+      ok.textContent = 'Nome riconosciuto: ' + r.p + '. Le voci saranno del tipo sensor.' + r.p + '_corrente_ac';
+      ok.hidden = false;
+    }
+    inp.addEventListener('input', anteprima);
+    root.querySelector('#qdfr-gen-dl').addEventListener('click', function () {
+      var r = ricava(inp.value);
+      if (r.err) { mostraErrore(r.err); return; }
+      pulisci();
+      var blob = new Blob([testo(r.p)], { type: 'text/yaml' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'dashboard-r4850g.yaml';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
+      ok.textContent = 'File preparato: cerca dashboard-r4850g.yaml nella cartella Download.'; ok.hidden = false;
+    });
+    root.querySelector('#qdfr-gen-cp').addEventListener('click', function () {
+      var r = ricava(inp.value);
+      if (r.err) { mostraErrore(r.err); return; }
+      pulisci();
+      var t = testo(r.p);
+      function fatto() { ok.textContent = 'Testo copiato: ora incollalo nell\'editor di Home Assistant.'; ok.hidden = false; }
+      function alternativa() {
+        var ta = document.createElement('textarea');
+        ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        var riuscito = false;
+        try { riuscito = document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta);
+        if (riuscito) fatto(); else mostraErrore('Il browser non permette di copiare da qui. Usa il pulsante Scarica.');
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(fatto, alternativa);
+      else alternativa();
+    });
+  })(document);
 })();
 </script>
 </body>
