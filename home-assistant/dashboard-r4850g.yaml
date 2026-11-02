@@ -1,0 +1,236 @@
+# Dashboard Home Assistant per R4850G ESPHome (versione 1)
+#
+# COME USARLA
+# 1. Impostazioni -> Dashboard -> Aggiungi dashboard -> "Nuova dashboard da zero".
+#    Dai il nome "Alimentatore R4850G" e premi Crea. Aprila dalla barra laterale.
+# 2. Matita in alto a destra -> tre puntini -> "Modifica con editor YAML" (o "Modifica in YAML").
+# 3. Cancella tutto e incolla questo file.
+# 4. Cerca e sostituisci "r4850g_f6aa0c" con il nome della TUA scheda (vedi sotto). Salva.
+#
+# NOME DELLA SCHEDA
+# Impostazioni -> Dispositivi e servizi -> Entità, scrivi "Tensione DC" nella ricerca:
+# l'ID è tipo sensor.r4850g_f6aa0c_tensione_dc. La parte tra "sensor." e "_tensione_dc"
+# è il prefisso da usare qui al posto di r4850g_f6aa0c.
+# Se hai installato con Device Builder e chiamato la scheda "r4850g", il prefisso è r4850g.
+#
+# Usa solo schede standard di Home Assistant: non serve HACS.
+title: Alimentatore R4850G
+views:
+  - title: Principale
+    path: principale
+    icon: mdi:flash
+    max_columns: 3
+    cards:
+      - type: tile
+        entity: sensor.r4850g_f6aa0c_stato_alimentatore
+        name: Stato
+        icon: mdi:power-plug
+        vertical: false
+        features_position: bottom
+      - type: horizontal-stack
+        cards:
+          - type: button
+            entity: button.r4850g_f6aa0c_accendi
+            name: Accendi
+            icon: mdi:power
+            show_state: false
+            tap_action:
+              action: toggle
+          - type: button
+            entity: button.r4850g_f6aa0c_spegni
+            name: Spegni
+            icon: mdi:power-off
+            show_state: false
+            tap_action:
+              action: toggle
+      - type: horizontal-stack
+        cards:
+          - type: gauge
+            entity: sensor.r4850g_f6aa0c_tensione_dc
+            name: Tensione
+            min: 48
+            max: 58
+            needle: true
+          - type: gauge
+            entity: sensor.r4850g_f6aa0c_corrente_dc
+            name: Corrente
+            min: 0
+            max: 50
+            needle: true
+      - type: horizontal-stack
+        cards:
+          - type: gauge
+            entity: sensor.r4850g_f6aa0c_potenza_dc
+            name: Potenza
+            min: 0
+            max: 3000
+            needle: true
+          - type: gauge
+            entity: sensor.r4850g_f6aa0c_rendimento
+            name: Rendimento
+            min: 80
+            max: 100
+            needle: true
+      - type: entities
+        title: Regolazioni
+        show_header_toggle: false
+        entities:
+          - entity: number.r4850g_f6aa0c_tensione_di_carica
+          - entity: number.r4850g_f6aa0c_corrente_di_carica
+          - entity: number.r4850g_f6aa0c_limite_rete_ac
+          - type: divider
+          - entity: switch.r4850g_f6aa0c_carica_a_fasi_attiva
+          - entity: sensor.r4850g_f6aa0c_fase_attiva
+      - type: entities
+        title: Energia
+        entities:
+          - entity: sensor.r4850g_f6aa0c_energia_erogata
+          - entity: sensor.r4850g_f6aa0c_energia_dalla_rete
+          - entity: sensor.r4850g_f6aa0c_rendimento_medio
+          - entity: sensor.r4850g_f6aa0c_perdite
+        footer:
+          type: buttons
+          entities:
+            - entity: button.r4850g_f6aa0c_azzera_energia
+              name: Azzera
+              icon: mdi:restart
+      - type: entities
+        title: Rete elettrica
+        entities:
+          - entity: sensor.r4850g_f6aa0c_tensione_ac
+          - entity: sensor.r4850g_f6aa0c_corrente_ac
+          - entity: sensor.r4850g_f6aa0c_potenza_ac
+          - entity: sensor.r4850g_f6aa0c_frequenza_ac
+      - type: entities
+        title: Temperature e ventola
+        entities:
+          - entity: sensor.r4850g_f6aa0c_temp_ingresso
+          - entity: sensor.r4850g_f6aa0c_temp_uscita
+          - entity: sensor.r4850g_f6aa0c_giri_ventola
+          - entity: number.r4850g_f6aa0c_ventola_minima
+        footer:
+          type: buttons
+          entities:
+            - entity: button.r4850g_f6aa0c_ventola_al_massimo
+              name: Massimo
+              icon: mdi:fan-plus
+            - entity: button.r4850g_f6aa0c_ventola_automatica
+              name: Automatica
+              icon: mdi:fan-auto
+      - type: history-graph
+        title: Tensione e corrente (24 ore)
+        hours_to_show: 24
+        entities:
+          - entity: sensor.r4850g_f6aa0c_tensione_dc
+          - entity: sensor.r4850g_f6aa0c_corrente_dc
+      - type: history-graph
+        title: Potenza (24 ore)
+        hours_to_show: 24
+        entities:
+          - entity: sensor.r4850g_f6aa0c_potenza_dc
+          - entity: sensor.r4850g_f6aa0c_potenza_ac
+      - type: history-graph
+        title: Temperature (24 ore)
+        hours_to_show: 24
+        entities:
+          - entity: sensor.r4850g_f6aa0c_temp_ingresso
+          - entity: sensor.r4850g_f6aa0c_temp_uscita
+
+  - title: Carica a fasi
+    path: fasi
+    icon: mdi:stairs-up
+    cards:
+      - type: entities
+        title: Carica a fasi
+        show_header_toggle: false
+        entities:
+          - entity: switch.r4850g_f6aa0c_carica_a_fasi_attiva
+          - entity: sensor.r4850g_f6aa0c_fase_attiva
+          - entity: number.r4850g_f6aa0c_ripartenza_fasi
+      - type: entities
+        title: Fase 1
+        entities:
+          - entity: number.r4850g_f6aa0c_fase_1_tensione
+          - entity: number.r4850g_f6aa0c_fase_1_corrente
+      - type: entities
+        title: Fase 2
+        entities:
+          - entity: number.r4850g_f6aa0c_fase_2_tensione
+          - entity: number.r4850g_f6aa0c_fase_2_corrente
+      - type: entities
+        title: Fase 3
+        entities:
+          - entity: number.r4850g_f6aa0c_fase_3_tensione
+          - entity: number.r4850g_f6aa0c_fase_3_corrente
+      - type: entities
+        title: Fase 4
+        entities:
+          - entity: number.r4850g_f6aa0c_fase_4_tensione
+          - entity: number.r4850g_f6aa0c_fase_4_corrente
+          - entity: number.r4850g_f6aa0c_fase_4_durata
+
+  - title: Orari
+    path: orari
+    icon: mdi:clock-outline
+    cards:
+      - type: entities
+        title: Accensione e spegnimento programmati
+        show_header_toggle: false
+        entities:
+          - entity: number.r4850g_f6aa0c_accendi_ora
+          - entity: number.r4850g_f6aa0c_accendi_minuti
+          - entity: sensor.r4850g_f6aa0c_accende_fra
+          - type: divider
+          - entity: number.r4850g_f6aa0c_spegni_ora
+          - entity: number.r4850g_f6aa0c_spegni_minuti
+          - entity: sensor.r4850g_f6aa0c_spegne_fra
+          - type: divider
+          - entity: sensor.r4850g_f6aa0c_ora_attuale
+          - entity: sensor.r4850g_f6aa0c_fonte_ora
+
+  - title: Impostazioni
+    path: impostazioni
+    icon: mdi:cog
+    cards:
+      - type: entities
+        title: Valori di riserva
+        entities:
+          - entity: number.r4850g_f6aa0c_tensione_di_riserva
+          - entity: number.r4850g_f6aa0c_corrente_di_riserva
+        footer:
+          type: buttons
+          entities:
+            - entity: button.r4850g_f6aa0c_valori_16_celle
+              name: 16 celle
+            - entity: button.r4850g_f6aa0c_valori_15_celle
+              name: 15 celle
+            - entity: button.r4850g_f6aa0c_salva_valori
+              name: Salva
+            - entity: button.r4850g_f6aa0c_richiama_valori
+              name: Richiama
+      - type: entities
+        title: Alimentatore
+        entities:
+          - entity: sensor.r4850g_f6aa0c_modello
+          - entity: sensor.r4850g_f6aa0c_n_di_serie
+          - entity: sensor.r4850g_f6aa0c_codice_articolo
+          - entity: sensor.r4850g_f6aa0c_data_produzione
+          - entity: sensor.r4850g_f6aa0c_ore_di_lavoro
+          - entity: sensor.r4850g_f6aa0c_stato_bus_can
+          - entity: sensor.r4850g_f6aa0c_messaggi_can
+        footer:
+          type: buttons
+          entities:
+            - entity: button.r4850g_f6aa0c_rileva_alimentatore
+              name: Rileva alimentatore
+      - type: entities
+        title: Scheda
+        entities:
+          - entity: sensor.r4850g_f6aa0c_segnale_wifi
+          - entity: sensor.r4850g_f6aa0c_indirizzo_ip
+          - entity: sensor.r4850g_f6aa0c_rete_wifi_collegata
+        footer:
+          type: buttons
+          entities:
+            - entity: button.r4850g_f6aa0c_riavvia_scheda
+              name: Riavvia
